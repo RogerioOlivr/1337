@@ -1,0 +1,50 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../lib/generated/prisma"
+}
+
+datasource db {
+  provider = "mysql"
+}
+
+model Usuario {
+  id        Int      @id @default(autoincrement())
+  nome      String
+  email     String   @unique
+  senha     String
+  ativo     Boolean  @default(true)
+  createdAt DateTime @default(now())
+  pedidos   Pedido[]
+}
+
+model Produto {
+  id          Int          @id @default(autoincrement())
+  nome        String
+  descricao   String?      @db.Text
+  preco       Float
+  imagem      String?
+  estoque     Int          @default(0)
+  ativo       Boolean      @default(true)
+  createdAt   DateTime     @default(now())
+  itensPedido ItemPedido[]
+}
+
+model Pedido {
+  id         Int          @id @default(autoincrement())
+  status     String       @default("pendente")
+  total      Float
+  createdAt  DateTime     @default(now())
+  usuarioId  Int
+  usuario    Usuario      @relation(fields: [usuarioId], references: [id])
+  itens      ItemPedido[]
+}
+
+model ItemPedido {
+  id         Int     @id @default(autoincrement())
+  quantidade Int
+  precoUnit  Float
+  pedidoId   Int
+  pedido     Pedido  @relation(fields: [pedidoId], references: [id])
+  produtoId  Int
+  produto    Produto @relation(fields: [produtoId], references: [id])
+}
