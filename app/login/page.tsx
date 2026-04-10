@@ -2,10 +2,13 @@
 
 import { useState } from 'react'
 import Link from 'next/link'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
+import { useSessionStore } from '@/src/store/sessionStore'
 
 export default function LoginPage() {
   const router = useRouter()
+  const searchParams = useSearchParams()
+  const { fetchSession } = useSessionStore()
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -32,7 +35,11 @@ export default function LoginPage() {
       return
     }
 
-    router.push('/checkout')
+    // Atualiza o store com os dados da sessão
+    await fetchSession()
+
+    const redirect = searchParams.get('redirect') ?? '/'
+    router.push(redirect)
     router.refresh()
   }
 

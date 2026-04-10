@@ -3,9 +3,11 @@
 import { useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
+import { useSessionStore } from '@/src/store/sessionStore'
 
 export default function CadastroPage() {
   const router = useRouter()
+  const { fetchSession } = useSessionStore()
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -42,11 +44,11 @@ export default function CadastroPage() {
     })
 
     if (!loginRes.ok) {
-      // Conta criada mas login falhou — redirecionar para login
       router.push('/login')
       return
     }
 
+    await fetchSession()
     router.push('/')
     router.refresh()
   }

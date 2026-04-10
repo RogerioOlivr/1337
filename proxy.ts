@@ -16,15 +16,18 @@ export async function proxy(request: NextRequest) {
 
   const token = request.cookies.get('session')?.value;
 
+  const loginUrl = new URL('/login', request.url);
+  loginUrl.searchParams.set('redirect', pathname);
+
   if (!token) {
-    return NextResponse.redirect(new URL('/login', request.url));
+    return NextResponse.redirect(loginUrl);
   }
 
   const payload = await verifyToken(token);
 
   if (!payload) {
     // Token expirado ou adulterado — apagar o cookie e redirecionar
-    const response = NextResponse.redirect(new URL('/login', request.url));
+    const response = NextResponse.redirect(loginUrl);
     response.cookies.delete('session');
     return response;
   }
