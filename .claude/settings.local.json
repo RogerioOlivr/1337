@@ -1,0 +1,37 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git remote:*)",
+      "Bash(git add:*)",
+      "Bash(git commit -m ':*)",
+      "Bash(git push:*)",
+      "Bash(npx tsc:*)",
+      "Bash(python -m json.tool)",
+      "Bash(curl -s -X POST http://localhost:3000/api/users -H 'Content-Type: application/json' -d '{\"nome\":\"Admin\",\"email\":\"admin@1337.com\",\"senha\":\"admin123\"}')",
+      "Bash(node -e ':*)",
+      "Bash(mysql -u root -p146829 1337 -e \"INSERT INTO Produto \\(nome, preco, estoque, descricao, ativo, createdAt\\) VALUES \\('Camiseta 1337 Classic', 89.90, 10, 'Camiseta preta com logo 1337', 1, NOW\\(\\)\\), \\('Camiseta 1337 White', 89.90, 5, 'Camiseta branca com logo 1337', 1, NOW\\(\\)\\);\")",
+      "Bash(curl -s http://localhost:3000/api/produtos)",
+      "Bash(curl -s -X POST http://localhost:3000/api/pedidos -H 'Content-Type: application/json' -d '{\"itens\":[{\"produtoId\":1,\"quantidade\":2}]}')",
+      "Bash(curl -s -b /tmp/cookies.txt -X POST http://localhost:3000/api/pedidos -H 'Content-Type: application/json' -d '{\"itens\":[{\"produtoId\":1,\"quantidade\":2},{\"produtoId\":2,\"quantidade\":1}]}')",
+      "Bash(curl -s -b /tmp/cookies.txt http://localhost:3000/api/pedidos)",
+      "Bash(curl -s -b /tmp/cookies.txt http://localhost:3000/api/pedidos/1)",
+      "Bash(curl -s -b /tmp/cookies.txt -X POST http://localhost:3000/api/pedidos -H 'Content-Type: application/json' -d '{\"itens\":[{\"produtoId\":2,\"quantidade\":99}]}')",
+      "Bash(curl -s -b /tmp/cookies.txt -X POST http://localhost:3000/api/pedidos -H 'Content-Type: application/json' -d '{\"itens\":[{\"produtoId\":999,\"quantidade\":1}]}')",
+      "Bash(curl -s -b /tmp/cookies.txt -X POST http://localhost:3000/api/pedidos -H 'Content-Type: application/json' -d '{\"itens\":[]}')",
+      "Bash(npm install:*)",
+      "Bash(node -e \"const {MercadoPagoConfig, Preference, Payment} = require\\('mercadopago'\\); console.log\\('OK'\\)\")",
+      "Bash(curl -s -b /tmp/cookies.txt -X PATCH http://localhost:3000/api/pedidos/1/status -H 'Content-Type: application/json' -d '{\"status\":\"cancelado\"}')",
+      "Bash(curl -s -b /tmp/cookies.txt -X PATCH http://localhost:3000/api/pedidos/1/status -H 'Content-Type: application/json' -d '{\"status\":\"pago\"}')",
+      "Bash(curl -s -b /tmp/cookies.txt -X POST http://localhost:3000/api/pedidos -H 'Content-Type: application/json' -d '{\"itens\":[{\"produtoId\":1,\"quantidade\":1}]}')",
+      "Bash(curl -s -X PATCH http://localhost:3000/api/pedidos/2/status -H 'Content-Type: application/json' -d '{\"status\":\"cancelado\"}')",
+      "Bash(ls /c/Users/roger/1337/src/*.html /c/Users/roger/1337/src/styles.css /c/Users/roger/1337/server.js)",
+      "Bash(npm run:*)",
+      "Bash(curl -s http://localhost:3000 -o /dev/null -w \"%{http_code}\")",
+      "Bash(npx @next/codemod@canary middleware-to-proxy . --no-interactive)",
+      "Bash(npx @next/codemod@canary middleware-to-proxy . --force)",
+      "Bash(ls \"c:/Users/roger/1337/\"*.ts)",
+      "Bash(curl -s -o /dev/null -w '%{http_code}' http://localhost:3000__TRACKED_VAR__)",
+      "Bash(npx prisma:*)"
+    ]
+  }
+}
