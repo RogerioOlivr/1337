@@ -113,12 +113,13 @@ export default function Navbar() {
                 position: 'absolute',
                 top: 'calc(100% + 16px)',
                 right: 0,
-                background: 'var(--background-primary)',
-                border: '1px solid var(--border)',
+                background: 'var(--surface-primary)',
+                border: '1px solid var(--border-light)',
                 minWidth: '200px',
-                zIndex: 100,
+                zIndex: 200,
+                boxShadow: '0 4px 24px rgba(0,0,0,0.10)',
               }}>
-                <div style={{ padding: '16px', borderBottom: '1px solid var(--border)' }}>
+                <div style={{ padding: '16px', borderBottom: '1px solid var(--border-light)' }}>
                   <p style={{ fontSize: '13px', fontWeight: 600, margin: 0 }}>{user.nome}</p>
                   <p style={{ fontSize: '11px', color: 'var(--foreground-secondary)', margin: '2px 0 0', letterSpacing: '0.02em' }}>{user.email}</p>
                 </div>
@@ -155,7 +156,7 @@ export default function Navbar() {
                   </Link>
                 </div>
 
-                <div style={{ borderTop: '1px solid var(--border)', padding: '8px 0' }}>
+                <div style={{ borderTop: '1px solid var(--border-light)', padding: '8px 0' }}>
                   <button
                     onClick={handleLogout}
                     style={{
