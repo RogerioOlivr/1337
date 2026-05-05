@@ -10,6 +10,7 @@ export async function POST(request: Request) {
     const result = await requestMagicLink.execute(email, redirect)
     return ok(result) // em dev: { magicLink: '...' }; em prod: {}
   } catch (error) {
+    console.error('[magic-link] ERRO COMPLETO:', error)
     return handleApiError(error)
   }
 }

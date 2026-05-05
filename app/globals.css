@@ -161,6 +161,24 @@ body {
 .delivery-note { display: flex; align-items: center; gap: 8px; padding: 16px; background: var(--surface-light); border: 1px solid var(--border-light); }
 .delivery-note span { font-size: 12px; color: var(--foreground-secondary); }
 
+/* Checkout Steps (Accordion) */
+.checkout-steps { display: flex; flex-direction: column; }
+.checkout-step { border-bottom: 1px solid var(--border-light); }
+.checkout-step:first-child { border-top: 1px solid var(--border-light); }
+.step-header { display: flex; align-items: center; gap: 16px; padding: 20px 0; cursor: default; user-select: none; }
+.step--done .step-header { cursor: pointer; }
+.step-number { font-family: var(--font-geist-mono), monospace; font-size: 11px; letter-spacing: 2px; color: var(--foreground-tertiary); min-width: 28px; }
+.step--active .step-number { color: var(--foreground-primary); font-weight: 700; }
+.step--done .step-number { color: var(--foreground-secondary); }
+.step-header-content { flex: 1; display: flex; flex-direction: column; gap: 3px; }
+.step-title { font-size: 15px; letter-spacing: 1.5px; }
+.step--disabled .step-title { color: var(--foreground-tertiary); }
+.step--active .step-title { color: var(--foreground-primary); }
+.step-summary { font-family: var(--font-inter), sans-serif; font-size: 12px; color: var(--foreground-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.step-edit-btn { font-family: var(--font-geist-mono), monospace; font-size: 10px; letter-spacing: 1px; color: var(--foreground-secondary); background: none; border: 1px solid var(--border-light); padding: 6px 14px; cursor: pointer; transition: border-color 0.2s, color 0.2s; text-transform: uppercase; flex-shrink: 0; }
+.step-edit-btn:hover { border-color: var(--foreground-primary); color: var(--foreground-primary); }
+.step-body { padding: 4px 0 28px 44px; }
+
 /* Page header */
 .page-header { padding: 64px 48px 32px; }
 .page-header h1 { font-family: var(--font-anton), sans-serif; font-size: 96px; }

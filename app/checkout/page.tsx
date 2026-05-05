@@ -3,32 +3,59 @@
 import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import Image from 'next/image'
-import { Lock, Truck, Mail, CheckCircle } from 'lucide-react'
+import { Lock, Truck, Mail } from 'lucide-react'
 import { useCartStore } from '@/src/store/cartStore'
 import { useSessionStore } from '@/src/store/sessionStore'
 
-type Etapa = 'identificacao' | 'aguardando-link' | 'confirmacao'
+type Etapa = 'email' | 'aguardando-link' | 'dados' | 'entrega' | 'pagamento'
+
+interface DadosPessoais {
+  nome: string
+  sobrenome: string
+  ddi: string
+  telefone: string
+  cpf: string
+}
+
+interface DadosEntrega {
+  cep: string
+  endereco: string
+  numero: string
+  complemento: string
+  bairro: string
+  cidade: string
+  estado: string
+}
+
+const stepOrder: Exclude<Etapa, 'aguardando-link'>[] = ['email', 'dados', 'entrega', 'pagamento']
 
 export default function CheckoutPage() {
   const { items, total, clearCart } = useCartStore()
   const { user, checked, fetchSession } = useSessionStore()
 
-  const [etapa, setEtapa] = useState<Etapa>('identificacao')
+  const [etapa, setEtapa] = useState<Etapa>('email')
   const [email, setEmail] = useState('')
-  const [magicLinkDev, setMagicLinkDev] = useState<string | null>(null)
+  const [dados, setDados] = useState<DadosPessoais>({ nome: '', sobrenome: '', ddi: '+55', telefone: '', cpf: '' })
+  const [entrega, setEntrega] = useState<DadosEntrega>({ cep: '', endereco: '', numero: '', complemento: '', bairro: '', cidade: '', estado: '' })
   const [loading, setLoading] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [cepLoading, setCepLoading] = useState(false)
+  const [cepError, setCepError] = useState<string | null>(null)
 
   const fmt = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
 
-  // Se já estiver logado, pula direto para confirmação
   useEffect(() => {
     if (!checked) fetchSession()
-    if (checked && user) setEtapa('confirmacao')
-  }, [checked, user, fetchSession])
+  }, [checked, fetchSession])
 
-  // Passo 1 — solicita magic link
+  useEffect(() => {
+    if (checked && user && (etapa === 'email' || etapa === 'aguardando-link')) {
+      setEmail(user.email)
+      setEtapa('dados')
+    }
+  }, [checked, user, etapa])
+
   const handleRequestLink = async (e: React.FormEvent) => {
     e.preventDefault()
     setLoading(true)
@@ -41,21 +68,62 @@ export default function CheckoutPage() {
     })
 
     const json = await res.json()
+    setLoading(false)
 
     if (!res.ok) {
       setError(json.error?.message ?? 'Erro ao enviar link.')
-      setLoading(false)
       return
     }
 
-    // Em desenvolvimento a API retorna o link direto para facilitar teste
-    if (json.data?.magicLink) setMagicLinkDev(json.data.magicLink)
+    if (json.data?.magicLink) {
+      console.log('[DEV] Magic Link:', json.data.magicLink)
+    }
 
     setEtapa('aguardando-link')
-    setLoading(false)
   }
 
-  // Passo 3 — cria pedido e vai para MP
+  const handleDados = (e: React.FormEvent) => {
+    e.preventDefault()
+    setEtapa('entrega')
+  }
+
+  const handleEntrega = (e: React.FormEvent) => {
+    e.preventDefault()
+    setEtapa('pagamento')
+  }
+
+  const handleCep = async (raw: string) => {
+    const digits = raw.replace(/\D/g, '')
+    setEntrega(d => ({ ...d, cep: raw }))
+    setCepError(null)
+
+    if (digits.length !== 8) return
+
+    setCepLoading(true)
+    try {
+      const res = await fetch(`https://viacep.com.br/ws/${digits}/json/`)
+      const json = await res.json()
+
+      if (json.erro) {
+        setCepError('CEP não encontrado.')
+        setCepLoading(false)
+        return
+      }
+
+      setEntrega(d => ({
+        ...d,
+        endereco: json.logradouro ?? '',
+        bairro: json.bairro ?? '',
+        cidade: json.localidade ?? '',
+        estado: json.uf ?? '',
+      }))
+    } catch {
+      setCepError('Erro ao buscar CEP. Verifique sua conexão.')
+    } finally {
+      setCepLoading(false)
+    }
+  }
+
   const handleConfirmar = async () => {
     if (items.length === 0) return
     setSubmitting(true)
@@ -98,6 +166,13 @@ export default function CheckoutPage() {
     }
   }
 
+  const stepStatus = (step: number): 'active' | 'done' | 'disabled' => {
+    const currentIdx = stepOrder.indexOf(etapa === 'aguardando-link' ? 'email' : etapa)
+    if (step - 1 === currentIdx) return 'active'
+    if (step - 1 < currentIdx) return 'done'
+    return 'disabled'
+  }
+
   return (
     <>
       <nav className="checkout-navbar">
@@ -115,105 +190,271 @@ export default function CheckoutPage() {
         {/* ── Lado esquerdo ── */}
         <div className="checkout-form">
 
-          {/* ETAPA 1 — Identificação */}
-          {etapa === 'identificacao' && (
-            <div className="form-section">
-              <h2 className="font-heading">IDENTIFICAÇÃO</h2>
-              <p style={{ fontSize: '13px', color: 'var(--foreground-secondary)', marginBottom: '24px' }}>
-                Informe seu e-mail para continuar. Enviaremos um link de acesso — sem precisar de senha.
-              </p>
-
-              <form onSubmit={handleRequestLink} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                <div className="form-field">
-                  <label>E-MAIL</label>
-                  <input
-                    type="email"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    placeholder="seu@email.com"
-                    required
-                    autoFocus
-                  />
-                </div>
-
-                {error && <p style={{ color: '#e53e3e', fontSize: '13px' }}>{error}</p>}
-
-                <button type="submit" className="btn-primary" disabled={loading}>
-                  {loading ? 'ENVIANDO...' : 'CONTINUAR COM E-MAIL'}
-                </button>
-              </form>
-            </div>
-          )}
-
-          {/* ETAPA 2 — Aguardando clique no link */}
-          {etapa === 'aguardando-link' && (
-            <div className="form-section" style={{ textAlign: 'center', padding: '32px 0' }}>
-              <Mail size={48} style={{ margin: '0 auto 16px', color: 'var(--foreground-secondary)' }} />
+          {/* Tela de aguardo de e-mail (fora do accordion) */}
+          {etapa === 'aguardando-link' ? (
+            <div className="form-section" style={{ textAlign: 'center', padding: '40px 0' }}>
+              <Mail size={40} style={{ margin: '0 auto 16px', color: 'var(--foreground-secondary)' }} />
               <h2 className="font-heading" style={{ fontSize: '28px', marginBottom: '12px' }}>VERIFIQUE SEU E-MAIL</h2>
               <p style={{ fontSize: '14px', color: 'var(--foreground-secondary)', maxWidth: '360px', margin: '0 auto 24px' }}>
                 Enviamos um link de acesso para <strong>{email}</strong>.<br />
                 Clique no link para continuar sua compra.
               </p>
-
-              {/* Link visível APENAS em desenvolvimento */}
-              {magicLinkDev && (
-                <div style={{
-                  marginTop: '24px', padding: '16px',
-                  background: 'var(--surface-light)',
-                  border: '1px solid var(--border-light)',
-                  textAlign: 'left',
-                }}>
-                  <p style={{ fontSize: '10px', fontWeight: 700, letterSpacing: '0.1em', color: 'var(--foreground-secondary)', marginBottom: '8px' }}>
-                    🛠 AMBIENTE DE DESENVOLVIMENTO — LINK DE ACESSO:
-                  </p>
-                  <a
-                    href={magicLinkDev}
-                    style={{ fontSize: '12px', color: 'var(--foreground-primary)', wordBreak: 'break-all', textDecoration: 'underline' }}
-                  >
-                    {magicLinkDev}
-                  </a>
-                </div>
-              )}
-
               <button
-                onClick={() => { setEtapa('identificacao'); setMagicLinkDev(null) }}
-                style={{ marginTop: '24px', fontSize: '12px', color: 'var(--foreground-secondary)', background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline' }}
+                onClick={() => setEtapa('email')}
+                style={{ fontSize: '12px', color: 'var(--foreground-secondary)', background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline' }}
               >
                 Usar outro e-mail
               </button>
             </div>
-          )}
+          ) : (
+            <div className="checkout-steps">
 
-          {/* ETAPA 3 — Confirmação (autenticado) */}
-          {etapa === 'confirmacao' && (
-            <div className="form-section">
-              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '24px' }}>
-                <CheckCircle size={20} style={{ color: '#276749', flexShrink: 0 }} />
-                <div>
-                  <p style={{ fontSize: '11px', fontWeight: 700, letterSpacing: '0.1em', color: 'var(--foreground-secondary)' }}>IDENTIFICADO COMO</p>
-                  <p style={{ fontSize: '14px', fontWeight: 600 }}>{user?.nome} · {user?.email}</p>
+              {/* ── Step 1: Identificação ── */}
+              <div className={`checkout-step step--${stepStatus(1)}`}>
+                <div className="step-header" onClick={() => stepStatus(1) === 'done' && setEtapa('email')}>
+                  <span className="step-number">01</span>
+                  <div className="step-header-content">
+                    <span className="step-title font-heading">IDENTIFICAÇÃO</span>
+                    {stepStatus(1) === 'done' && <span className="step-summary">{email}</span>}
+                  </div>
+                  {stepStatus(1) === 'done' && (
+                    <button className="step-edit-btn" onClick={(e) => { e.stopPropagation(); setEtapa('email') }}>
+                      Editar
+                    </button>
+                  )}
                 </div>
+
+                {stepStatus(1) === 'active' && (
+                  <div className="step-body">
+                    <p style={{ fontSize: '13px', color: 'var(--foreground-secondary)', marginBottom: '24px' }}>
+                      Informe seu e-mail para continuar. Enviaremos um link de acesso — sem precisar de senha.
+                    </p>
+                    <form onSubmit={handleRequestLink} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                      <div className="form-field">
+                        <label>E-MAIL</label>
+                        <input
+                          type="email"
+                          value={email}
+                          onChange={(e) => setEmail(e.target.value)}
+                          placeholder="seu@email.com"
+                          required
+                          autoFocus
+                        />
+                      </div>
+                      {error && <p style={{ color: '#e53e3e', fontSize: '13px' }}>{error}</p>}
+                      <button type="submit" className="btn-primary" disabled={loading}>
+                        {loading ? 'ENVIANDO...' : 'CONTINUAR COM E-MAIL'}
+                      </button>
+                    </form>
+                  </div>
+                )}
               </div>
 
-              <div className="divider" style={{ marginBottom: '24px' }} />
+              {/* ── Step 2: Dados Pessoais ── */}
+              <div className={`checkout-step step--${stepStatus(2)}`}>
+                <div className="step-header" onClick={() => stepStatus(2) === 'done' && setEtapa('dados')}>
+                  <span className="step-number">02</span>
+                  <div className="step-header-content">
+                    <span className="step-title font-heading">DADOS PESSOAIS</span>
+                    {stepStatus(2) === 'done' && (
+                      <span className="step-summary">{dados.nome} {dados.sobrenome} · {dados.ddi} {dados.telefone}</span>
+                    )}
+                  </div>
+                  {stepStatus(2) === 'done' && (
+                    <button className="step-edit-btn" onClick={(e) => { e.stopPropagation(); setEtapa('dados') }}>
+                      Editar
+                    </button>
+                  )}
+                </div>
 
-              <h2 className="font-heading" style={{ marginBottom: '16px' }}>CONFIRMAR PEDIDO</h2>
-              <p style={{ fontSize: '13px', color: 'var(--foreground-secondary)', marginBottom: '24px' }}>
-                Ao confirmar, você será redirecionado para o pagamento seguro via Mercado Pago.
-              </p>
+                {stepStatus(2) === 'active' && (
+                  <div className="step-body">
+                    <form onSubmit={handleDados} style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                      <div className="form-row">
+                        <div className="form-field">
+                          <label>NOME</label>
+                          <input
+                            value={dados.nome}
+                            onChange={(e) => setDados(d => ({ ...d, nome: e.target.value }))}
+                            placeholder="Nome"
+                            required
+                            autoFocus
+                          />
+                        </div>
+                        <div className="form-field">
+                          <label>SOBRENOME</label>
+                          <input
+                            value={dados.sobrenome}
+                            onChange={(e) => setDados(d => ({ ...d, sobrenome: e.target.value }))}
+                            placeholder="Sobrenome"
+                            required
+                          />
+                        </div>
+                      </div>
+                      <div className="form-row">
+                        <div className="form-field w-fixed-sm">
+                          <label>DDI</label>
+                          <input
+                            value={dados.ddi}
+                            onChange={(e) => setDados(d => ({ ...d, ddi: e.target.value }))}
+                            placeholder="+55"
+                            required
+                          />
+                        </div>
+                        <div className="form-field">
+                          <label>TELEFONE</label>
+                          <input
+                            value={dados.telefone}
+                            onChange={(e) => setDados(d => ({ ...d, telefone: e.target.value }))}
+                            placeholder="(11) 99999-9999"
+                            required
+                          />
+                        </div>
+                      </div>
+                      <div className="form-field">
+                        <label>CPF</label>
+                        <input
+                          value={dados.cpf}
+                          onChange={(e) => setDados(d => ({ ...d, cpf: e.target.value }))}
+                          placeholder="000.000.000-00"
+                          required
+                        />
+                      </div>
+                      <button type="submit" className="btn-primary">IR PARA ENTREGA</button>
+                    </form>
+                  </div>
+                )}
+              </div>
 
-              {error && <p style={{ color: '#e53e3e', fontSize: '13px', marginBottom: '16px' }}>{error}</p>}
+              {/* ── Step 3: Entrega ── */}
+              <div className={`checkout-step step--${stepStatus(3)}`}>
+                <div className="step-header" onClick={() => stepStatus(3) === 'done' && setEtapa('entrega')}>
+                  <span className="step-number">03</span>
+                  <div className="step-header-content">
+                    <span className="step-title font-heading">ENTREGA</span>
+                    {stepStatus(3) === 'done' && (
+                      <span className="step-summary">
+                        {entrega.endereco}, {entrega.numero} — {entrega.cidade}/{entrega.estado}
+                      </span>
+                    )}
+                  </div>
+                  {stepStatus(3) === 'done' && (
+                    <button className="step-edit-btn" onClick={(e) => { e.stopPropagation(); setEtapa('entrega') }}>
+                      Editar
+                    </button>
+                  )}
+                </div>
 
-              {items.length === 0 ? (
-                <p style={{ fontSize: '13px', color: 'var(--foreground-secondary)' }}>
-                  Seu carrinho está vazio.{' '}
-                  <Link href="/produtos" style={{ textDecoration: 'underline' }}>Ver coleção</Link>
-                </p>
-              ) : (
-                <button className="btn-primary" onClick={handleConfirmar} disabled={submitting}>
-                  {submitting ? 'PROCESSANDO...' : `CONFIRMAR PEDIDO — ${fmt(total())}`}
-                </button>
-              )}
+                {stepStatus(3) === 'active' && (
+                  <div className="step-body">
+                    <form onSubmit={handleEntrega} style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                      <div className="form-row">
+                        <div className="form-field w-fixed-md">
+                          <label>CEP{cepLoading && <span style={{ marginLeft: 8, fontWeight: 400, letterSpacing: 0 }}>buscando...</span>}</label>
+                          <input
+                            value={entrega.cep}
+                            onChange={(e) => handleCep(e.target.value)}
+                            placeholder="00000-000"
+                            maxLength={9}
+                            required
+                            autoFocus
+                          />
+                          {cepError && <span style={{ fontSize: '11px', color: '#e53e3e' }}>{cepError}</span>}
+                        </div>
+                        <div className="form-field">
+                          <label>ENDEREÇO</label>
+                          <input
+                            value={entrega.endereco}
+                            onChange={(e) => setEntrega(d => ({ ...d, endereco: e.target.value }))}
+                            placeholder="Rua, Avenida..."
+                            required
+                          />
+                        </div>
+                      </div>
+                      <div className="form-row">
+                        <div className="form-field w-fixed-sm">
+                          <label>NÚMERO</label>
+                          <input
+                            value={entrega.numero}
+                            onChange={(e) => setEntrega(d => ({ ...d, numero: e.target.value }))}
+                            placeholder="123"
+                            required
+                          />
+                        </div>
+                        <div className="form-field">
+                          <label>COMPLEMENTO</label>
+                          <input
+                            value={entrega.complemento}
+                            onChange={(e) => setEntrega(d => ({ ...d, complemento: e.target.value }))}
+                            placeholder="Apto, Bloco... (opcional)"
+                          />
+                        </div>
+                      </div>
+                      <div className="form-row">
+                        <div className="form-field">
+                          <label>BAIRRO</label>
+                          <input
+                            value={entrega.bairro}
+                            onChange={(e) => setEntrega(d => ({ ...d, bairro: e.target.value }))}
+                            placeholder="Bairro"
+                            required
+                          />
+                        </div>
+                        <div className="form-field">
+                          <label>CIDADE</label>
+                          <input
+                            value={entrega.cidade}
+                            onChange={(e) => setEntrega(d => ({ ...d, cidade: e.target.value }))}
+                            placeholder="Cidade"
+                            required
+                          />
+                        </div>
+                        <div className="form-field w-fixed-sm">
+                          <label>ESTADO</label>
+                          <input
+                            value={entrega.estado}
+                            onChange={(e) => setEntrega(d => ({ ...d, estado: e.target.value }))}
+                            placeholder="SP"
+                            maxLength={2}
+                            required
+                          />
+                        </div>
+                      </div>
+                      <button type="submit" className="btn-primary">IR PARA PAGAMENTO</button>
+                    </form>
+                  </div>
+                )}
+              </div>
+
+              {/* ── Step 4: Pagamento ── */}
+              <div className={`checkout-step step--${stepStatus(4)}`}>
+                <div className="step-header">
+                  <span className="step-number">04</span>
+                  <div className="step-header-content">
+                    <span className="step-title font-heading">PAGAMENTO</span>
+                  </div>
+                </div>
+
+                {stepStatus(4) === 'active' && (
+                  <div className="step-body">
+                    <p style={{ fontSize: '13px', color: 'var(--foreground-secondary)', marginBottom: '24px' }}>
+                      Ao confirmar, você será redirecionado para o pagamento seguro via Mercado Pago.
+                    </p>
+                    {error && <p style={{ color: '#e53e3e', fontSize: '13px', marginBottom: '16px' }}>{error}</p>}
+                    {items.length === 0 ? (
+                      <p style={{ fontSize: '13px', color: 'var(--foreground-secondary)' }}>
+                        Seu carrinho está vazio.{' '}
+                        <Link href="/produtos" style={{ textDecoration: 'underline' }}>Ver coleção</Link>
+                      </p>
+                    ) : (
+                      <button className="btn-primary" onClick={handleConfirmar} disabled={submitting}>
+                        {submitting ? 'PROCESSANDO...' : `CONFIRMAR E PAGAR — ${fmt(total())}`}
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+
             </div>
           )}
         </div>
