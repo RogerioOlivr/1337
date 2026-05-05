@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { verifyToken } from '@/src/shared/auth/jwt';
 
 // Rotas que exigem sessão ativa
-const PROTECTED_PATHS = ['/checkout', '/pedidos', '/perfil', '/admin'];
+// /checkout foi removido: o próprio checkout gerencia auth via magic link
+const PROTECTED_PATHS = ['/pedidos', '/perfil', '/admin'];
 
 // Rotas de autenticação — redireciona para longe se já estiver logado
 const AUTH_PATHS = ['/login', '/cadastro'];
@@ -43,7 +44,6 @@ export const config = {
   matcher: [
     '/login',
     '/cadastro',
-    '/checkout/:path*',
     '/pedidos/:path*',
     '/perfil/:path*',
     '/admin/:path*',

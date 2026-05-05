@@ -31,7 +31,8 @@
       "Bash(npx @next/codemod@canary middleware-to-proxy . --force)",
       "Bash(ls \"c:/Users/roger/1337/\"*.ts)",
       "Bash(curl -s -o /dev/null -w '%{http_code}' http://localhost:3000__TRACKED_VAR__)",
-      "Bash(npx prisma:*)"
+      "Bash(npx prisma:*)",
+      "Bash(npx tsx:*)"
     ]
   }
 }
