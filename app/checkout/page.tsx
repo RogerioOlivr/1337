@@ -1,25 +1,30 @@
 'use client'
 
 import { useState, useEffect } from 'react'
+import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import Image from 'next/image'
-import { Lock, Truck, Mail } from 'lucide-react'
+import { Lock, Truck, Mail, CheckCircle } from 'lucide-react'
+import { initMercadoPago, Payment as MpPayment } from '@mercadopago/sdk-react'
 import { useCartStore } from '@/src/store/cartStore'
 import { useSessionStore } from '@/src/store/sessionStore'
+
+initMercadoPago(process.env.NEXT_PUBLIC_MERCADOPAGO_PUBLIC_KEY!, { locale: 'pt-BR' })
+
+// ─── Types ───────────────────────────────────────────────────────────────────
 
 type Etapa = 'email' | 'aguardando-link' | 'dados' | 'entrega' | 'pagamento'
 
 interface DadosPessoais {
   nome: string
   sobrenome: string
-  ddi: string
   telefone: string
   cpf: string
 }
 
-interface DadosEntrega {
+interface EnderecoForm {
   cep: string
-  endereco: string
+  logradouro: string
   numero: string
   complemento: string
   bairro: string
@@ -27,34 +32,106 @@ interface DadosEntrega {
   estado: string
 }
 
+interface EnderecoSalvo {
+  id: number
+  cep: string
+  logradouro: string
+  numero: string
+  complemento: string | null
+  bairro: string
+  cidade: string
+  estado: string
+  padrao: boolean
+}
+
+const ENDERECO_VAZIO: EnderecoForm = {
+  cep: '', logradouro: '', numero: '', complemento: '', bairro: '', cidade: '', estado: '',
+}
+
 const stepOrder: Exclude<Etapa, 'aguardando-link'>[] = ['email', 'dados', 'entrega', 'pagamento']
+
+// ─── Component ───────────────────────────────────────────────────────────────
 
 export default function CheckoutPage() {
   const { items, total, clearCart } = useCartStore()
   const { user, checked, fetchSession } = useSessionStore()
+  const router = useRouter()
 
+  // Etapa atual do accordion
   const [etapa, setEtapa] = useState<Etapa>('email')
+
+  // Dados do formulário
   const [email, setEmail] = useState('')
-  const [dados, setDados] = useState<DadosPessoais>({ nome: '', sobrenome: '', ddi: '+55', telefone: '', cpf: '' })
-  const [entrega, setEntrega] = useState<DadosEntrega>({ cep: '', endereco: '', numero: '', complemento: '', bairro: '', cidade: '', estado: '' })
+  const [dados, setDados] = useState<DadosPessoais>({ nome: '', sobrenome: '', telefone: '', cpf: '' })
+  const [enderecoForm, setEnderecoForm] = useState<EnderecoForm>(ENDERECO_VAZIO)
+
+  // Endereços salvos no banco (usuários logados)
+  const [enderecosSalvos, setEnderecosSalvos] = useState<EnderecoSalvo[]>([])
+  const [enderecoSelecionadoId, setEnderecoSelecionadoId] = useState<number | null>(null)
+  const [usandoNovoEndereco, setUsandoNovoEndereco] = useState(false)
+
+  // Estados de UI
   const [loading, setLoading] = useState(false)
-  const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [cepLoading, setCepLoading] = useState(false)
   const [cepError, setCepError] = useState<string | null>(null)
+  const [contextoCarregado, setContextoCarregado] = useState(false)
 
   const fmt = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
+
+  // ─── Carrega sessão ───────────────────────────────────────────────────────
 
   useEffect(() => {
     if (!checked) fetchSession()
   }, [checked, fetchSession])
 
+  // ─── Ao autenticar: carrega contexto do checkout ─────────────────────────
+
   useEffect(() => {
-    if (checked && user && (etapa === 'email' || etapa === 'aguardando-link')) {
-      setEmail(user.email)
-      setEtapa('dados')
-    }
+    if (!checked || !user) return
+    if (etapa !== 'email' && etapa !== 'aguardando-link') return
+
+    setEmail(user.email)
+
+    fetch('/api/checkout/contexto')
+      .then(r => r.json())
+      .then(j => {
+        if (!j.success) { setEtapa('dados'); return }
+
+        const { usuario, enderecos } = j.data
+
+        // Pré-preenche dados pessoais com o que já existe no banco
+        const partes = usuario.nome.trim().split(/\s+/)
+        setDados({
+          nome: partes[0] ?? '',
+          sobrenome: partes.slice(1).join(' '),
+          telefone: usuario.telefone ?? '',
+          cpf: usuario.cpf ?? '',
+        })
+
+        setEnderecosSalvos(enderecos)
+        setContextoCarregado(true)
+
+        // Define o endereço padrão como selecionado
+        const padrao = enderecos.find((e: EnderecoSalvo) => e.padrao) ?? enderecos[0] ?? null
+        if (padrao) setEnderecoSelecionadoId(padrao.id)
+
+        // Decide qual etapa abrir
+        const dadosCompletos = !!(usuario.cpf && usuario.telefone)
+        const temEndereco = enderecos.length > 0
+
+        if (dadosCompletos && temEndereco) {
+          setEtapa('pagamento')        // Tudo pronto → direto ao pagamento
+        } else if (dadosCompletos) {
+          setEtapa('entrega')          // Só falta endereço
+        } else {
+          setEtapa('dados')            // Faltam dados pessoais
+        }
+      })
+      .catch(() => setEtapa('dados'))
   }, [checked, user, etapa])
+
+  // ─── Handlers de step ────────────────────────────────────────────────────
 
   const handleRequestLink = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -70,31 +147,94 @@ export default function CheckoutPage() {
     const json = await res.json()
     setLoading(false)
 
-    if (!res.ok) {
-      setError(json.error?.message ?? 'Erro ao enviar link.')
-      return
-    }
-
-    if (json.data?.magicLink) {
-      console.log('[DEV] Magic Link:', json.data.magicLink)
-    }
+    if (!res.ok) { setError(json.error?.message ?? 'Erro ao enviar link.'); return }
+    if (json.data?.magicLink) console.log('[DEV] Magic Link:', json.data.magicLink)
 
     setEtapa('aguardando-link')
   }
 
-  const handleDados = (e: React.FormEvent) => {
+  const handleDados = async (e: React.FormEvent) => {
     e.preventDefault()
+
+    // Salva CPF e telefone no banco
+    await fetch('/api/perfil', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        nome: `${dados.nome} ${dados.sobrenome}`.trim(),
+        cpf: dados.cpf,
+        telefone: dados.telefone,
+      }),
+    })
+
     setEtapa('entrega')
   }
 
-  const handleEntrega = (e: React.FormEvent) => {
+  const handleEntrega = async (e: React.FormEvent) => {
     e.preventDefault()
+
+    if (!usandoNovoEndereco && enderecoSelecionadoId) {
+      // Usa endereço já salvo
+      setEtapa('pagamento')
+      return
+    }
+
+    // Salva novo endereço no banco e seleciona
+    const res = await fetch('/api/enderecos', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        ...enderecoForm,
+        padrao: enderecosSalvos.length === 0, // primeiro endereço vira padrão
+      }),
+    })
+
+    const json = await res.json()
+    if (!res.ok) { setError(json.error?.message ?? 'Erro ao salvar endereço.'); return }
+
+    const novo: EnderecoSalvo = json.data
+    setEnderecosSalvos(prev => [...prev, novo])
+    setEnderecoSelecionadoId(novo.id)
+    setUsandoNovoEndereco(false)
     setEtapa('pagamento')
   }
 
+  const handlePagar = async ({ formData }: { formData: Record<string, unknown> }) => {
+    const pedidoRes = await fetch('/api/pedidos', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        itens: items.map(i => ({ produtoId: i.produtoId, quantidade: i.quantidade })),
+        enderecoId: enderecoSelecionadoId ?? undefined,
+      }),
+    })
+
+    const pedidoJson = await pedidoRes.json()
+    if (!pedidoRes.ok) throw new Error(pedidoJson.error?.message ?? 'Erro ao criar pedido.')
+
+    const pedidoId = pedidoJson.data.id
+
+    const pagRes = await fetch('/api/pagamentos', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pedidoId, formData }),
+    })
+
+    const pagJson = await pagRes.json()
+    if (!pagRes.ok) throw new Error(pagJson.error?.message ?? 'Erro ao processar pagamento.')
+
+    const { status } = pagJson.data
+    if (status === 'rejected') throw new Error('Pagamento recusado. Verifique os dados e tente novamente.')
+
+    clearCart()
+    router.push(`/pedidos/${pedidoId}?status=${status === 'approved' ? 'sucesso' : 'pendente'}`)
+  }
+
+  // ─── CEP ────────────────────────────────────────────────────────────────
+
   const handleCep = async (raw: string) => {
     const digits = raw.replace(/\D/g, '')
-    setEntrega(d => ({ ...d, cep: raw }))
+    setEnderecoForm(d => ({ ...d, cep: raw }))
     setCepError(null)
 
     if (digits.length !== 8) return
@@ -103,75 +243,41 @@ export default function CheckoutPage() {
     try {
       const res = await fetch(`https://viacep.com.br/ws/${digits}/json/`)
       const json = await res.json()
-
-      if (json.erro) {
-        setCepError('CEP não encontrado.')
-        setCepLoading(false)
-        return
-      }
-
-      setEntrega(d => ({
+      if (json.erro) { setCepError('CEP não encontrado.'); return }
+      setEnderecoForm(d => ({
         ...d,
-        endereco: json.logradouro ?? '',
+        logradouro: json.logradouro ?? '',
         bairro: json.bairro ?? '',
         cidade: json.localidade ?? '',
         estado: json.uf ?? '',
       }))
     } catch {
-      setCepError('Erro ao buscar CEP. Verifique sua conexão.')
+      setCepError('Erro ao buscar CEP.')
     } finally {
       setCepLoading(false)
     }
   }
 
-  const handleConfirmar = async () => {
-    if (items.length === 0) return
-    setSubmitting(true)
-    setError(null)
-
-    try {
-      const pedidoRes = await fetch('/api/pedidos', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          itens: items.map((i) => ({ produtoId: i.produtoId, quantidade: i.quantidade })),
-        }),
-      })
-
-      const pedidoJson = await pedidoRes.json()
-      if (!pedidoRes.ok) {
-        setError(pedidoJson.error?.message ?? 'Erro ao criar pedido.')
-        setSubmitting(false)
-        return
-      }
-
-      const pagRes = await fetch('/api/pagamentos', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ pedidoId: pedidoJson.data.id }),
-      })
-
-      const pagJson = await pagRes.json()
-      if (!pagRes.ok) {
-        setError(pagJson.error?.message ?? 'Erro ao iniciar pagamento.')
-        setSubmitting(false)
-        return
-      }
-
-      clearCart()
-      window.location.href = pagJson.data.checkoutUrl
-    } catch {
-      setError('Erro inesperado. Tente novamente.')
-      setSubmitting(false)
-    }
-  }
+  // ─── Step status ─────────────────────────────────────────────────────────
 
   const stepStatus = (step: number): 'active' | 'done' | 'disabled' => {
-    const currentIdx = stepOrder.indexOf(etapa === 'aguardando-link' ? 'email' : etapa)
-    if (step - 1 === currentIdx) return 'active'
-    if (step - 1 < currentIdx) return 'done'
+    const idx = stepOrder.indexOf(etapa === 'aguardando-link' ? 'email' : etapa)
+    if (step - 1 === idx) return 'active'
+    if (step - 1 < idx) return 'done'
     return 'disabled'
   }
+
+  // ─── Resumo dos steps colapsados ─────────────────────────────────────────
+
+  const enderecoSelecionado = enderecosSalvos.find(e => e.id === enderecoSelecionadoId)
+
+  const resumoEndereco = enderecoSelecionado
+    ? `${enderecoSelecionado.logradouro}, ${enderecoSelecionado.numero} — ${enderecoSelecionado.cidade}/${enderecoSelecionado.estado}`
+    : enderecoForm.logradouro
+      ? `${enderecoForm.logradouro}, ${enderecoForm.numero} — ${enderecoForm.cidade}/${enderecoForm.estado}`
+      : ''
+
+  // ─── Render ──────────────────────────────────────────────────────────────
 
   return (
     <>
@@ -187,10 +293,9 @@ export default function CheckoutPage() {
       <div className="divider" />
 
       <div className="checkout-body">
-        {/* ── Lado esquerdo ── */}
         <div className="checkout-form">
 
-          {/* Tela de aguardo de e-mail (fora do accordion) */}
+          {/* ── Aguardando magic link ── */}
           {etapa === 'aguardando-link' ? (
             <div className="form-section" style={{ textAlign: 'center', padding: '40px 0' }}>
               <Mail size={40} style={{ margin: '0 auto 16px', color: 'var(--foreground-secondary)' }} />
@@ -199,10 +304,7 @@ export default function CheckoutPage() {
                 Enviamos um link de acesso para <strong>{email}</strong>.<br />
                 Clique no link para continuar sua compra.
               </p>
-              <button
-                onClick={() => setEtapa('email')}
-                style={{ fontSize: '12px', color: 'var(--foreground-secondary)', background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline' }}
-              >
+              <button onClick={() => setEtapa('email')} style={{ fontSize: '12px', color: 'var(--foreground-secondary)', background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline' }}>
                 Usar outro e-mail
               </button>
             </div>
@@ -218,9 +320,7 @@ export default function CheckoutPage() {
                     {stepStatus(1) === 'done' && <span className="step-summary">{email}</span>}
                   </div>
                   {stepStatus(1) === 'done' && (
-                    <button className="step-edit-btn" onClick={(e) => { e.stopPropagation(); setEtapa('email') }}>
-                      Editar
-                    </button>
+                    <button className="step-edit-btn" onClick={e => { e.stopPropagation(); setEtapa('email') }}>Editar</button>
                   )}
                 </div>
 
@@ -232,14 +332,7 @@ export default function CheckoutPage() {
                     <form onSubmit={handleRequestLink} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
                       <div className="form-field">
                         <label>E-MAIL</label>
-                        <input
-                          type="email"
-                          value={email}
-                          onChange={(e) => setEmail(e.target.value)}
-                          placeholder="seu@email.com"
-                          required
-                          autoFocus
-                        />
+                        <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="seu@email.com" required autoFocus />
                       </div>
                       {error && <p style={{ color: '#e53e3e', fontSize: '13px' }}>{error}</p>}
                       <button type="submit" className="btn-primary" disabled={loading}>
@@ -257,13 +350,11 @@ export default function CheckoutPage() {
                   <div className="step-header-content">
                     <span className="step-title font-heading">DADOS PESSOAIS</span>
                     {stepStatus(2) === 'done' && (
-                      <span className="step-summary">{dados.nome} {dados.sobrenome} · {dados.ddi} {dados.telefone}</span>
+                      <span className="step-summary">{dados.nome} {dados.sobrenome} · {dados.telefone}</span>
                     )}
                   </div>
                   {stepStatus(2) === 'done' && (
-                    <button className="step-edit-btn" onClick={(e) => { e.stopPropagation(); setEtapa('dados') }}>
-                      Editar
-                    </button>
+                    <button className="step-edit-btn" onClick={e => { e.stopPropagation(); setEtapa('dados') }}>Editar</button>
                   )}
                 </div>
 
@@ -273,52 +364,22 @@ export default function CheckoutPage() {
                       <div className="form-row">
                         <div className="form-field">
                           <label>NOME</label>
-                          <input
-                            value={dados.nome}
-                            onChange={(e) => setDados(d => ({ ...d, nome: e.target.value }))}
-                            placeholder="Nome"
-                            required
-                            autoFocus
-                          />
+                          <input value={dados.nome} onChange={e => setDados(d => ({ ...d, nome: e.target.value }))} placeholder="Nome" required autoFocus />
                         </div>
                         <div className="form-field">
                           <label>SOBRENOME</label>
-                          <input
-                            value={dados.sobrenome}
-                            onChange={(e) => setDados(d => ({ ...d, sobrenome: e.target.value }))}
-                            placeholder="Sobrenome"
-                            required
-                          />
+                          <input value={dados.sobrenome} onChange={e => setDados(d => ({ ...d, sobrenome: e.target.value }))} placeholder="Sobrenome" required />
                         </div>
                       </div>
                       <div className="form-row">
-                        <div className="form-field w-fixed-sm">
-                          <label>DDI</label>
-                          <input
-                            value={dados.ddi}
-                            onChange={(e) => setDados(d => ({ ...d, ddi: e.target.value }))}
-                            placeholder="+55"
-                            required
-                          />
-                        </div>
                         <div className="form-field">
                           <label>TELEFONE</label>
-                          <input
-                            value={dados.telefone}
-                            onChange={(e) => setDados(d => ({ ...d, telefone: e.target.value }))}
-                            placeholder="(11) 99999-9999"
-                            required
-                          />
+                          <input value={dados.telefone} onChange={e => setDados(d => ({ ...d, telefone: e.target.value }))} placeholder="(11) 99999-9999" required />
                         </div>
-                      </div>
-                      <div className="form-field">
-                        <label>CPF</label>
-                        <input
-                          value={dados.cpf}
-                          onChange={(e) => setDados(d => ({ ...d, cpf: e.target.value }))}
-                          placeholder="000.000.000-00"
-                          required
-                        />
+                        <div className="form-field">
+                          <label>CPF</label>
+                          <input value={dados.cpf} onChange={e => setDados(d => ({ ...d, cpf: e.target.value }))} placeholder="000.000.000-00" required />
+                        </div>
                       </div>
                       <button type="submit" className="btn-primary">IR PARA ENTREGA</button>
                     </form>
@@ -332,95 +393,117 @@ export default function CheckoutPage() {
                   <span className="step-number">03</span>
                   <div className="step-header-content">
                     <span className="step-title font-heading">ENTREGA</span>
-                    {stepStatus(3) === 'done' && (
-                      <span className="step-summary">
-                        {entrega.endereco}, {entrega.numero} — {entrega.cidade}/{entrega.estado}
-                      </span>
+                    {stepStatus(3) === 'done' && resumoEndereco && (
+                      <span className="step-summary">{resumoEndereco}</span>
                     )}
                   </div>
                   {stepStatus(3) === 'done' && (
-                    <button className="step-edit-btn" onClick={(e) => { e.stopPropagation(); setEtapa('entrega') }}>
-                      Editar
-                    </button>
+                    <button className="step-edit-btn" onClick={e => { e.stopPropagation(); setEtapa('entrega') }}>Editar</button>
                   )}
                 </div>
 
                 {stepStatus(3) === 'active' && (
                   <div className="step-body">
                     <form onSubmit={handleEntrega} style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-                      <div className="form-row">
-                        <div className="form-field w-fixed-md">
-                          <label>CEP{cepLoading && <span style={{ marginLeft: 8, fontWeight: 400, letterSpacing: 0 }}>buscando...</span>}</label>
-                          <input
-                            value={entrega.cep}
-                            onChange={(e) => handleCep(e.target.value)}
-                            placeholder="00000-000"
-                            maxLength={9}
-                            required
-                            autoFocus
-                          />
-                          {cepError && <span style={{ fontSize: '11px', color: '#e53e3e' }}>{cepError}</span>}
+
+                      {/* Endereços salvos */}
+                      {enderecosSalvos.length > 0 && !usandoNovoEndereco && (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                          {enderecosSalvos.map(end => (
+                            <label
+                              key={end.id}
+                              style={{
+                                display: 'flex', alignItems: 'flex-start', gap: '12px',
+                                padding: '14px 16px', border: `1px solid ${enderecoSelecionadoId === end.id ? 'var(--foreground-primary)' : 'var(--border-light)'}`,
+                                cursor: 'pointer',
+                              }}
+                            >
+                              <input
+                                type="radio"
+                                name="endereco"
+                                checked={enderecoSelecionadoId === end.id}
+                                onChange={() => setEnderecoSelecionadoId(end.id)}
+                                style={{ marginTop: '2px', flexShrink: 0 }}
+                              />
+                              <div>
+                                <p style={{ fontSize: '13px', fontWeight: 500 }}>
+                                  {end.logradouro}, {end.numero}{end.complemento ? `, ${end.complemento}` : ''}
+                                </p>
+                                <p style={{ fontSize: '12px', color: 'var(--foreground-secondary)', marginTop: '2px' }}>
+                                  {end.bairro} · {end.cidade}/{end.estado} · CEP {end.cep}
+                                </p>
+                                {end.padrao && (
+                                  <span style={{ fontSize: '10px', color: 'var(--foreground-tertiary)', display: 'flex', alignItems: 'center', gap: '4px', marginTop: '4px' }}>
+                                    <CheckCircle size={10} /> Endereço padrão
+                                  </span>
+                                )}
+                              </div>
+                            </label>
+                          ))}
+
+                          <button
+                            type="button"
+                            onClick={() => { setUsandoNovoEndereco(true); setEnderecoForm(ENDERECO_VAZIO) }}
+                            style={{ alignSelf: 'flex-start', fontSize: '12px', color: 'var(--foreground-secondary)', background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline', padding: 0 }}
+                          >
+                            + Usar outro endereço
+                          </button>
+
+                          <button type="submit" className="btn-primary">IR PARA PAGAMENTO</button>
                         </div>
-                        <div className="form-field">
-                          <label>ENDEREÇO</label>
-                          <input
-                            value={entrega.endereco}
-                            onChange={(e) => setEntrega(d => ({ ...d, endereco: e.target.value }))}
-                            placeholder="Rua, Avenida..."
-                            required
-                          />
-                        </div>
-                      </div>
-                      <div className="form-row">
-                        <div className="form-field w-fixed-sm">
-                          <label>NÚMERO</label>
-                          <input
-                            value={entrega.numero}
-                            onChange={(e) => setEntrega(d => ({ ...d, numero: e.target.value }))}
-                            placeholder="123"
-                            required
-                          />
-                        </div>
-                        <div className="form-field">
-                          <label>COMPLEMENTO</label>
-                          <input
-                            value={entrega.complemento}
-                            onChange={(e) => setEntrega(d => ({ ...d, complemento: e.target.value }))}
-                            placeholder="Apto, Bloco... (opcional)"
-                          />
-                        </div>
-                      </div>
-                      <div className="form-row">
-                        <div className="form-field">
-                          <label>BAIRRO</label>
-                          <input
-                            value={entrega.bairro}
-                            onChange={(e) => setEntrega(d => ({ ...d, bairro: e.target.value }))}
-                            placeholder="Bairro"
-                            required
-                          />
-                        </div>
-                        <div className="form-field">
-                          <label>CIDADE</label>
-                          <input
-                            value={entrega.cidade}
-                            onChange={(e) => setEntrega(d => ({ ...d, cidade: e.target.value }))}
-                            placeholder="Cidade"
-                            required
-                          />
-                        </div>
-                        <div className="form-field w-fixed-sm">
-                          <label>ESTADO</label>
-                          <input
-                            value={entrega.estado}
-                            onChange={(e) => setEntrega(d => ({ ...d, estado: e.target.value }))}
-                            placeholder="SP"
-                            maxLength={2}
-                            required
-                          />
-                        </div>
-                      </div>
-                      <button type="submit" className="btn-primary">IR PARA PAGAMENTO</button>
+                      )}
+
+                      {/* Formulário de novo endereço */}
+                      {(enderecosSalvos.length === 0 || usandoNovoEndereco) && (
+                        <>
+                          {usandoNovoEndereco && (
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                              <span style={{ fontSize: '13px', color: 'var(--foreground-secondary)' }}>Novo endereço</span>
+                              <button type="button" onClick={() => setUsandoNovoEndereco(false)} style={{ fontSize: '12px', color: 'var(--foreground-secondary)', background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline' }}>
+                                Usar endereço salvo
+                              </button>
+                            </div>
+                          )}
+
+                          <div className="form-row">
+                            <div className="form-field w-fixed-md">
+                              <label>CEP{cepLoading && <span style={{ marginLeft: 8, fontWeight: 400, letterSpacing: 0 }}>buscando...</span>}</label>
+                              <input value={enderecoForm.cep} onChange={e => handleCep(e.target.value)} placeholder="00000-000" maxLength={9} required autoFocus />
+                              {cepError && <span style={{ fontSize: '11px', color: '#e53e3e' }}>{cepError}</span>}
+                            </div>
+                            <div className="form-field">
+                              <label>LOGRADOURO</label>
+                              <input value={enderecoForm.logradouro} onChange={e => setEnderecoForm(d => ({ ...d, logradouro: e.target.value }))} placeholder="Rua, Avenida..." required />
+                            </div>
+                          </div>
+                          <div className="form-row">
+                            <div className="form-field w-fixed-sm">
+                              <label>NÚMERO</label>
+                              <input value={enderecoForm.numero} onChange={e => setEnderecoForm(d => ({ ...d, numero: e.target.value }))} placeholder="123" required />
+                            </div>
+                            <div className="form-field">
+                              <label>COMPLEMENTO</label>
+                              <input value={enderecoForm.complemento} onChange={e => setEnderecoForm(d => ({ ...d, complemento: e.target.value }))} placeholder="Apto, Bloco... (opcional)" />
+                            </div>
+                          </div>
+                          <div className="form-row">
+                            <div className="form-field">
+                              <label>BAIRRO</label>
+                              <input value={enderecoForm.bairro} onChange={e => setEnderecoForm(d => ({ ...d, bairro: e.target.value }))} placeholder="Bairro" required />
+                            </div>
+                            <div className="form-field">
+                              <label>CIDADE</label>
+                              <input value={enderecoForm.cidade} onChange={e => setEnderecoForm(d => ({ ...d, cidade: e.target.value }))} placeholder="Cidade" required />
+                            </div>
+                            <div className="form-field w-fixed-sm">
+                              <label>ESTADO</label>
+                              <input value={enderecoForm.estado} onChange={e => setEnderecoForm(d => ({ ...d, estado: e.target.value }))} placeholder="SP" maxLength={2} required />
+                            </div>
+                          </div>
+                          <button type="submit" className="btn-primary">IR PARA PAGAMENTO</button>
+                        </>
+                      )}
+
                     </form>
                   </div>
                 )}
@@ -437,19 +520,25 @@ export default function CheckoutPage() {
 
                 {stepStatus(4) === 'active' && (
                   <div className="step-body">
-                    <p style={{ fontSize: '13px', color: 'var(--foreground-secondary)', marginBottom: '24px' }}>
-                      Ao confirmar, você será redirecionado para o pagamento seguro via Mercado Pago.
-                    </p>
-                    {error && <p style={{ color: '#e53e3e', fontSize: '13px', marginBottom: '16px' }}>{error}</p>}
                     {items.length === 0 ? (
                       <p style={{ fontSize: '13px', color: 'var(--foreground-secondary)' }}>
                         Seu carrinho está vazio.{' '}
                         <Link href="/produtos" style={{ textDecoration: 'underline' }}>Ver coleção</Link>
                       </p>
                     ) : (
-                      <button className="btn-primary" onClick={handleConfirmar} disabled={submitting}>
-                        {submitting ? 'PROCESSANDO...' : `CONFIRMAR E PAGAR — ${fmt(total())}`}
-                      </button>
+                      <MpPayment
+                        initialization={{ amount: total() }}
+                        customization={{
+                          paymentMethods: {
+                            creditCard: 'all',
+                            debitCard: 'all',
+                            ticket: 'all',
+                            bankTransfer: 'all',
+                          },
+                        }}
+                        onSubmit={handlePagar}
+                        onError={err => console.error('[MP Brick]', err)}
+                      />
                     )}
                   </div>
                 )}
@@ -467,7 +556,7 @@ export default function CheckoutPage() {
           {items.length === 0 ? (
             <p style={{ fontSize: '13px', color: 'var(--foreground-secondary)', padding: '16px 0' }}>Nenhum item no carrinho.</p>
           ) : (
-            items.map((item) => (
+            items.map(item => (
               <div key={item.produtoId} className="summary-item">
                 {item.imagem ? (
                   <Image src={item.imagem} alt={item.nome} width={64} height={64} style={{ objectFit: 'cover' }} />
