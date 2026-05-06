@@ -6,6 +6,7 @@ import Link from 'next/link'
 import Image from 'next/image'
 import { Lock, Truck, Mail, CheckCircle } from 'lucide-react'
 import { initMercadoPago, Payment as MpPayment } from '@mercadopago/sdk-react'
+import type { IPaymentFormData } from '@mercadopago/sdk-react/esm/bricks/payment/type'
 import { useCartStore } from '@/src/store/cartStore'
 import { useSessionStore } from '@/src/store/sessionStore'
 
@@ -199,7 +200,7 @@ export default function CheckoutPage() {
     setEtapa('pagamento')
   }
 
-  const handlePagar = async ({ formData }: { formData: Record<string, unknown> }) => {
+  const handlePagar = async ({ formData }: IPaymentFormData) => {
     const pedidoRes = await fetch('/api/pedidos', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
