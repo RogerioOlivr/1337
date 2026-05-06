@@ -8,14 +8,33 @@ datasource db {
 }
 
 model Usuario {
-  id        Int      @id @default(autoincrement())
+  id        Int        @id @default(autoincrement())
   nome      String
-  email     String   @unique
+  email     String     @unique
   senha     String
-  role      String   @default("user")
-  ativo     Boolean  @default(true)
-  createdAt DateTime @default(now())
+  role      String     @default("user")
+  ativo     Boolean    @default(true)
+  cpf       String?
+  telefone  String?
+  createdAt DateTime   @default(now())
   pedidos   Pedido[]
+  enderecos Endereco[]
+}
+
+model Endereco {
+  id          Int      @id @default(autoincrement())
+  usuarioId   Int
+  usuario     Usuario  @relation(fields: [usuarioId], references: [id])
+  cep         String
+  logradouro  String
+  numero      String
+  complemento String?
+  bairro      String
+  cidade      String
+  estado      String
+  padrao      Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  pedidos     Pedido[]
 }
 
 model Produto {
@@ -31,18 +50,20 @@ model Produto {
 }
 
 model Pedido {
-  id         Int          @id @default(autoincrement())
-  status     String       @default("pendente")
-  total      Float
-  createdAt  DateTime     @default(now())
-  usuarioId  Int
-  usuario    Usuario      @relation(fields: [usuarioId], references: [id])
-  itens      ItemPedido[]
+  id          Int          @id @default(autoincrement())
+  status      String       @default("pendente")
+  total       Float
+  createdAt   DateTime     @default(now())
+  usuarioId   Int
+  usuario     Usuario      @relation(fields: [usuarioId], references: [id])
+  enderecoId  Int?
+  endereco    Endereco?    @relation(fields: [enderecoId], references: [id])
+  itens       ItemPedido[]
 }
 
 model MagicToken {
   id        Int       @id @default(autoincrement())
-  token     String    @unique          // SHA-256 do token bruto
+  token     String    @unique
   email     String
   expiresAt DateTime
   usedAt    DateTime?
