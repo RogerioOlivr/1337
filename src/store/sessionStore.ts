@@ -4,6 +4,7 @@ interface SessionUser {
   id: number
   nome: string
   email: string
+  role: string
 }
 
 interface SessionStore {

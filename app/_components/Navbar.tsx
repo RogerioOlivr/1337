@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { Search, ShoppingBag, User, LogOut, Package, Settings, ChevronDown } from 'lucide-react'
+import { Search, ShoppingBag, User, LogOut, Package, Settings, ChevronDown, LayoutDashboard } from 'lucide-react'
 import { useCartStore } from '@/src/store/cartStore'
 import { useSessionStore } from '@/src/store/sessionStore'
 
@@ -155,6 +155,25 @@ export default function Navbar() {
                     CONFIGURAÇÕES
                   </Link>
                 </div>
+
+                {user.role === 'admin' && (
+                  <div style={{ borderTop: '1px solid var(--border-light)', padding: '8px 0' }}>
+                    <Link
+                      href="/admin"
+                      onClick={() => setDropdownOpen(false)}
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: '10px',
+                        padding: '10px 16px', fontSize: '12px', letterSpacing: '0.08em',
+                        color: 'var(--foreground-primary)', textDecoration: 'none',
+                        fontWeight: 700,
+                      }}
+                      className="nav-dropdown-item"
+                    >
+                      <LayoutDashboard size={15} />
+                      ADMIN
+                    </Link>
+                  </div>
+                )}
 
                 <div style={{ borderTop: '1px solid var(--border-light)', padding: '8px 0' }}>
                   <button
