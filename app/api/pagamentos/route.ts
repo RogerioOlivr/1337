@@ -1,27 +1,31 @@
-import { CriarPreferenciaPagamento } from '@/application/use-cases/CriarPreferenciaPagamento';
-import { requireSession } from '@/src/shared/auth/requireSession';
-import { ok } from '@/src/shared/api/ApiResponse';
-import { handleApiError } from '@/src/shared/api/handleApiError';
-import { ValidationError } from '@/src/domain/errors/ValidationError';
+import { ProcessarPagamento } from '@/application/use-cases/ProcessarPagamento'
+import { requireSession } from '@/src/shared/auth/requireSession'
+import { ok } from '@/src/shared/api/ApiResponse'
+import { handleApiError } from '@/src/shared/api/handleApiError'
+import { ValidationError } from '@/src/domain/errors/ValidationError'
 
-const criarPreferencia = new CriarPreferenciaPagamento();
+const processarPagamento = new ProcessarPagamento()
 
 // POST /api/pagamentos
-// Body: { pedidoId: number }
-// Retorna a URL de checkout do Mercado Pago para redirecionar o usuário.
+// Body: { pedidoId: number, formData: object }
+// formData vem diretamente do Payment Brick do Mercado Pago
 export async function POST(request: Request) {
   try {
-    const session = await requireSession();
-    const body = await request.json();
-    const { pedidoId } = body;
+    const session = await requireSession()
+    const body = await request.json()
+    const { pedidoId, formData } = body
 
     if (!pedidoId || !Number.isInteger(pedidoId) || pedidoId <= 0) {
-      throw new ValidationError('pedidoId deve ser um inteiro positivo');
+      throw new ValidationError('pedidoId deve ser um inteiro positivo')
     }
 
-    const preferencia = await criarPreferencia.execute(pedidoId, session.userId);
-    return ok(preferencia, 201);
+    if (!formData || typeof formData !== 'object') {
+      throw new ValidationError('formData inválido')
+    }
+
+    const resultado = await processarPagamento.execute(pedidoId, session.userId, formData)
+    return ok(resultado)
   } catch (error) {
-    return handleApiError(error);
+    return handleApiError(error)
   }
 }

@@ -9,6 +9,7 @@ export const createPedidoSchema = z.object({
   itens: z
     .array(itemSchema)
     .min(1, 'O pedido deve ter pelo menos um item'),
+  enderecoId: z.number().int().positive().optional(),
 });
 
 export type CreatePedidoInput = z.infer<typeof createPedidoSchema> & {

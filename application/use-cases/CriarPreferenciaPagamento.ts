@@ -29,12 +29,16 @@ export class CriarPreferenciaPagamento {
       );
     }
 
-    const baseUrl = process.env.NEXT_PUBLIC_BASE_URL ?? 'http://localhost:3000';
+    const baseUrl = (process.env.NEXT_PUBLIC_BASE_URL ?? 'http://localhost:3000').replace(/\/$/, '');
+    const pedidoUrl = `${baseUrl}/pedidos/${pedidoId}`;
+    const webhookUrl = `${baseUrl}/api/webhooks/mercadopago`;
+
+    console.log('[MP] back_urls:', pedidoUrl);
+    console.log('[MP] notification_url:', webhookUrl);
 
     const preference = new Preference(mp);
     const result = await preference.create({
       body: {
-        // external_reference vincula a notificação do webhook ao nosso pedido
         external_reference: String(pedidoId),
         items: pedido.itens.map((item) => ({
           id: String(item.produtoId),
@@ -45,12 +49,12 @@ export class CriarPreferenciaPagamento {
           currency_id: 'BRL',
         })),
         back_urls: {
-          success: `${baseUrl}/pedidos/${pedidoId}?status=sucesso`,
-          failure: `${baseUrl}/pedidos/${pedidoId}?status=falha`,
-          pending: `${baseUrl}/pedidos/${pedidoId}?status=pendente`,
+          success: pedidoUrl,
+          failure: pedidoUrl,
+          pending: pedidoUrl,
         },
         auto_return: 'approved',
-        notification_url: `${baseUrl}/api/webhooks/mercadopago`,
+        notification_url: webhookUrl,
       },
     });
 

@@ -60,8 +60,9 @@ export default function PedidosPage() {
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1px', background: 'var(--border-light)' }}>
           {pedidos.map((p) => (
-            <div
+            <Link
               key={p.id}
+              href={`/pedidos/${p.id}`}
               style={{
                 display: 'flex',
                 alignItems: 'center',
@@ -69,6 +70,8 @@ export default function PedidosPage() {
                 padding: '20px 24px',
                 background: 'var(--surface-primary)',
                 gap: '16px',
+                textDecoration: 'none',
+                color: 'inherit',
               }}
             >
               <div style={{ flex: 1 }}>
@@ -98,7 +101,7 @@ export default function PedidosPage() {
               </div>
 
               <ChevronRight size={16} style={{ color: 'var(--foreground-secondary)', flexShrink: 0 }} />
-            </div>
+            </Link>
           ))}
         </div>
       )}

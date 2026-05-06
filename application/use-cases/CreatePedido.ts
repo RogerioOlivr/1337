@@ -70,6 +70,7 @@ export class CreatePedido {
           usuarioId,
           total,
           status: 'pendente',
+          enderecoId: parsed.data.enderecoId ?? null,
           itens: {
             create: itens.map((item) => {
               const produto = produtos.find((p) => p.id === item.produtoId)!;
