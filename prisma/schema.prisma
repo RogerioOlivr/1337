@@ -14,7 +14,7 @@ model Usuario {
   senha     String
   role      String     @default("user")
   ativo     Boolean    @default(true)
-  cpf       String?
+  cpf       String?  @unique
   telefone  String?
   createdAt DateTime   @default(now())
   pedidos   Pedido[]
