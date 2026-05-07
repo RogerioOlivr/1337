@@ -141,7 +141,7 @@ export default function Navbar() {
                   </Link>
 
                   <Link
-                    href="/perfil"
+                    href="/minha-conta"
                     onClick={() => setDropdownOpen(false)}
                     style={{
                       display: 'flex', alignItems: 'center', gap: '10px',
@@ -152,7 +152,7 @@ export default function Navbar() {
                     className="nav-dropdown-item"
                   >
                     <Settings size={15} />
-                    CONFIGURAÇÕES
+                    MINHA CONTA
                   </Link>
                 </div>
 

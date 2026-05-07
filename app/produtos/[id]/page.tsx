@@ -5,6 +5,7 @@ import Image from 'next/image'
 import { notFound } from 'next/navigation'
 import { useCartStore } from '@/src/store/cartStore'
 
+
 interface Produto {
   id: number
   nome: string
@@ -19,6 +20,7 @@ const SIZES = ['P', 'M', 'G', 'GG']
 export default function ProdutoPage({ params }: { params: Promise<{ id: string }> }) {
   const [produto, setProduto] = useState<Produto | null>(null)
   const [loading, setLoading] = useState(true)
+  const [produtoNotFound, setNotFound] = useState(false)
   const [selectedSize, setSelectedSize] = useState('G')
   const [added, setAdded] = useState(false)
 
@@ -28,14 +30,15 @@ export default function ProdutoPage({ params }: { params: Promise<{ id: string }
     params.then(({ id }) => {
       fetch(`/api/produtos/${id}`)
         .then((res) => {
-          if (!res.ok) notFound()
+          if (!res.ok) { setNotFound(true); setLoading(false); return null }
           return res.json()
         })
         .then((json) => {
+          if (!json) return
           setProduto(json.data)
           setLoading(false)
         })
-        .catch(() => notFound())
+        .catch(() => { setNotFound(true); setLoading(false) })
     })
   }, [params])
 
@@ -63,6 +66,7 @@ export default function ProdutoPage({ params }: { params: Promise<{ id: string }
     )
   }
 
+  if (produtoNotFound) return notFound()
   if (!produto) return null
 
   return (

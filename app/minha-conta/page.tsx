@@ -1,5 +1,5 @@
 import { redirect } from 'next/navigation'
 
-export default function PerfilLegadoPage() {
+export default function MinhaContaPage() {
   redirect('/minha-conta/perfil')
 }
