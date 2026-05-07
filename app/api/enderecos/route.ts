@@ -1,13 +1,25 @@
 import { SalvarEndereco } from '@/application/use-cases/SalvarEndereco'
+import { ListarEnderecos } from '@/application/use-cases/ListarEnderecos'
 import { requireSession } from '@/src/shared/auth/requireSession'
 import { ok } from '@/src/shared/api/ApiResponse'
 import { handleApiError } from '@/src/shared/api/handleApiError'
 import { ValidationError } from '@/src/domain/errors/ValidationError'
 
 const salvarEndereco = new SalvarEndereco()
+const listarEnderecos = new ListarEnderecos()
+
+// GET /api/enderecos
+export async function GET() {
+  try {
+    const session = await requireSession()
+    const enderecos = await listarEnderecos.execute(session.userId)
+    return ok(enderecos)
+  } catch (error) {
+    return handleApiError(error)
+  }
+}
 
 // POST /api/enderecos
-// Cria um novo endereço para o usuário logado
 export async function POST(request: Request) {
   try {
     const session = await requireSession()
