@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import Image from 'next/image'
-import { Lock, Truck, Mail, CheckCircle } from 'lucide-react'
+import { Lock, Truck, CheckCircle } from 'lucide-react'
 import { initMercadoPago, Payment as MpPayment } from '@mercadopago/sdk-react'
 import type { IPaymentFormData } from '@mercadopago/sdk-react/esm/bricks/payment/type'
 import { useCartStore } from '@/src/store/cartStore'
@@ -14,7 +14,7 @@ initMercadoPago(process.env.NEXT_PUBLIC_MERCADOPAGO_PUBLIC_KEY!, { locale: 'pt-B
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
-type Etapa = 'email' | 'aguardando-link' | 'dados' | 'entrega' | 'pagamento'
+type Etapa = 'email' | 'dados' | 'entrega' | 'pagamento'
 
 interface DadosPessoais {
   nome: string
@@ -49,7 +49,7 @@ const ENDERECO_VAZIO: EnderecoForm = {
   cep: '', logradouro: '', numero: '', complemento: '', bairro: '', cidade: '', estado: '',
 }
 
-const stepOrder: Exclude<Etapa, 'aguardando-link'>[] = ['email', 'dados', 'entrega', 'pagamento']
+const stepOrder: Etapa[] = ['email', 'dados', 'entrega', 'pagamento']
 
 // ─── Component ───────────────────────────────────────────────────────────────
 
@@ -58,25 +58,19 @@ export default function CheckoutPage() {
   const { user, checked, fetchSession } = useSessionStore()
   const router = useRouter()
 
-  // Etapa atual do accordion
   const [etapa, setEtapa] = useState<Etapa>('email')
-
-  // Dados do formulário
   const [email, setEmail] = useState('')
   const [dados, setDados] = useState<DadosPessoais>({ nome: '', sobrenome: '', telefone: '', cpf: '' })
   const [enderecoForm, setEnderecoForm] = useState<EnderecoForm>(ENDERECO_VAZIO)
-
-  // Endereços salvos no banco (usuários logados)
   const [enderecosSalvos, setEnderecosSalvos] = useState<EnderecoSalvo[]>([])
   const [enderecoSelecionadoId, setEnderecoSelecionadoId] = useState<number | null>(null)
   const [usandoNovoEndereco, setUsandoNovoEndereco] = useState(false)
+  const [tipoIdentificacao, setTipoIdentificacao] = useState<'existente' | 'novo' | null>(null)
 
-  // Estados de UI
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [cepLoading, setCepLoading] = useState(false)
   const [cepError, setCepError] = useState<string | null>(null)
-  const [contextoCarregado, setContextoCarregado] = useState(false)
 
   const fmt = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
 
@@ -86,11 +80,10 @@ export default function CheckoutPage() {
     if (!checked) fetchSession()
   }, [checked, fetchSession])
 
-  // ─── Ao autenticar: carrega contexto do checkout ─────────────────────────
+  // ─── Usuário já autenticado: pula step de email ───────────────────────────
 
   useEffect(() => {
-    if (!checked || !user) return
-    if (etapa !== 'email' && etapa !== 'aguardando-link') return
+    if (!checked || !user || etapa !== 'email') return
 
     setEmail(user.email)
 
@@ -100,64 +93,73 @@ export default function CheckoutPage() {
         if (!j.success) { setEtapa('dados'); return }
 
         const { usuario, enderecos } = j.data
-
-        // Pré-preenche dados pessoais com o que já existe no banco
-        const partes = usuario.nome.trim().split(/\s+/)
-        setDados({
-          nome: partes[0] ?? '',
-          sobrenome: partes.slice(1).join(' '),
-          telefone: usuario.telefone ?? '',
-          cpf: usuario.cpf ?? '',
-        })
-
-        setEnderecosSalvos(enderecos)
-        setContextoCarregado(true)
-
-        // Define o endereço padrão como selecionado
-        const padrao = enderecos.find((e: EnderecoSalvo) => e.padrao) ?? enderecos[0] ?? null
-        if (padrao) setEnderecoSelecionadoId(padrao.id)
-
-        // Decide qual etapa abrir
-        const dadosCompletos = !!(usuario.cpf && usuario.telefone)
-        const temEndereco = enderecos.length > 0
-
-        if (dadosCompletos && temEndereco) {
-          setEtapa('pagamento')        // Tudo pronto → direto ao pagamento
-        } else if (dadosCompletos) {
-          setEtapa('entrega')          // Só falta endereço
-        } else {
-          setEtapa('dados')            // Faltam dados pessoais
-        }
+        aplicarContexto(usuario, enderecos, null)
       })
       .catch(() => setEtapa('dados'))
-  }, [checked, user, etapa])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [checked, user])
 
-  // ─── Handlers de step ────────────────────────────────────────────────────
+  // ─── Aplica contexto retornado pelo servidor ──────────────────────────────
 
-  const handleRequestLink = async (e: React.FormEvent) => {
+  function aplicarContexto(
+    usuario: { nome: string; email: string; cpf: string | null; telefone: string | null },
+    enderecos: EnderecoSalvo[],
+    tipo: 'existente' | 'novo' | null,
+  ) {
+    const partes = usuario.nome.trim().split(/\s+/)
+    setDados({
+      nome: partes[0] ?? '',
+      sobrenome: partes.slice(1).join(' '),
+      telefone: usuario.telefone ?? '',
+      cpf: usuario.cpf ?? '',
+    })
+
+    setEnderecosSalvos(enderecos)
+    if (tipo !== null) setTipoIdentificacao(tipo)
+
+    const padrao = enderecos.find(e => e.padrao) ?? enderecos[0] ?? null
+    if (padrao) setEnderecoSelecionadoId(padrao.id)
+
+    const dadosCompletos = !!(usuario.cpf && usuario.telefone)
+    const temEndereco = enderecos.length > 0
+
+    if (dadosCompletos && temEndereco) {
+      setEtapa('pagamento')
+    } else if (dadosCompletos) {
+      setEtapa('entrega')
+    } else {
+      setEtapa('dados')
+    }
+  }
+
+  // ─── Step 1: Identificação silenciosa ────────────────────────────────────
+
+  const handleIniciarCheckout = async (e: React.FormEvent) => {
     e.preventDefault()
     setLoading(true)
     setError(null)
 
-    const res = await fetch('/api/auth/magic-link', {
+    const res = await fetch('/api/checkout/iniciar', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, redirect: '/checkout' }),
+      body: JSON.stringify({ email: email.trim() }),
     })
 
     const json = await res.json()
     setLoading(false)
 
-    if (!res.ok) { setError(json.error?.message ?? 'Erro ao enviar link.'); return }
-    if (json.data?.magicLink) console.log('[DEV] Magic Link:', json.data.magicLink)
+    if (!res.ok) { setError(json.error?.message ?? 'Erro ao continuar. Tente novamente.'); return }
 
-    setEtapa('aguardando-link')
+    const { tipo, usuario, enderecos } = json.data
+    aplicarContexto(usuario, enderecos, tipo)
+    fetchSession() // atualiza navbar em background
   }
+
+  // ─── Step 2: Dados pessoais ───────────────────────────────────────────────
 
   const handleDados = async (e: React.FormEvent) => {
     e.preventDefault()
 
-    // Salva CPF e telefone no banco
     await fetch('/api/perfil', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
@@ -171,22 +173,22 @@ export default function CheckoutPage() {
     setEtapa('entrega')
   }
 
+  // ─── Step 3: Entrega ──────────────────────────────────────────────────────
+
   const handleEntrega = async (e: React.FormEvent) => {
     e.preventDefault()
 
     if (!usandoNovoEndereco && enderecoSelecionadoId) {
-      // Usa endereço já salvo
       setEtapa('pagamento')
       return
     }
 
-    // Salva novo endereço no banco e seleciona
     const res = await fetch('/api/enderecos', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         ...enderecoForm,
-        padrao: enderecosSalvos.length === 0, // primeiro endereço vira padrão
+        padrao: enderecosSalvos.length === 0,
       }),
     })
 
@@ -199,6 +201,8 @@ export default function CheckoutPage() {
     setUsandoNovoEndereco(false)
     setEtapa('pagamento')
   }
+
+  // ─── Step 4: Pagamento ────────────────────────────────────────────────────
 
   const handlePagar = async ({ formData }: IPaymentFormData) => {
     const pedidoRes = await fetch('/api/pedidos', {
@@ -231,7 +235,7 @@ export default function CheckoutPage() {
     router.push(`/pedidos/${pedidoId}?status=${status === 'approved' ? 'sucesso' : 'pendente'}`)
   }
 
-  // ─── CEP ────────────────────────────────────────────────────────────────
+  // ─── CEP ──────────────────────────────────────────────────────────────────
 
   const handleCep = async (raw: string) => {
     const digits = raw.replace(/\D/g, '')
@@ -259,16 +263,16 @@ export default function CheckoutPage() {
     }
   }
 
-  // ─── Step status ─────────────────────────────────────────────────────────
+  // ─── Step status ──────────────────────────────────────────────────────────
 
   const stepStatus = (step: number): 'active' | 'done' | 'disabled' => {
-    const idx = stepOrder.indexOf(etapa === 'aguardando-link' ? 'email' : etapa)
+    const idx = stepOrder.indexOf(etapa)
     if (step - 1 === idx) return 'active'
     if (step - 1 < idx) return 'done'
     return 'disabled'
   }
 
-  // ─── Resumo dos steps colapsados ─────────────────────────────────────────
+  // ─── Resumo ───────────────────────────────────────────────────────────────
 
   const enderecoSelecionado = enderecosSalvos.find(e => e.id === enderecoSelecionadoId)
 
@@ -278,7 +282,7 @@ export default function CheckoutPage() {
       ? `${enderecoForm.logradouro}, ${enderecoForm.numero} — ${enderecoForm.cidade}/${enderecoForm.estado}`
       : ''
 
-  // ─── Render ──────────────────────────────────────────────────────────────
+  // ─── Render ───────────────────────────────────────────────────────────────
 
   return (
     <>
@@ -295,258 +299,248 @@ export default function CheckoutPage() {
 
       <div className="checkout-body">
         <div className="checkout-form">
+          <div className="checkout-steps">
 
-          {/* ── Aguardando magic link ── */}
-          {etapa === 'aguardando-link' ? (
-            <div className="form-section" style={{ textAlign: 'center', padding: '40px 0' }}>
-              <Mail size={40} style={{ margin: '0 auto 16px', color: 'var(--foreground-secondary)' }} />
-              <h2 className="font-heading" style={{ fontSize: '28px', marginBottom: '12px' }}>VERIFIQUE SEU E-MAIL</h2>
-              <p style={{ fontSize: '14px', color: 'var(--foreground-secondary)', maxWidth: '360px', margin: '0 auto 24px' }}>
-                Enviamos um link de acesso para <strong>{email}</strong>.<br />
-                Clique no link para continuar sua compra.
-              </p>
-              <button onClick={() => setEtapa('email')} style={{ fontSize: '12px', color: 'var(--foreground-secondary)', background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline' }}>
-                Usar outro e-mail
-              </button>
-            </div>
-          ) : (
-            <div className="checkout-steps">
-
-              {/* ── Step 1: Identificação ── */}
-              <div className={`checkout-step step--${stepStatus(1)}`}>
-                <div className="step-header" onClick={() => stepStatus(1) === 'done' && setEtapa('email')}>
-                  <span className="step-number">01</span>
-                  <div className="step-header-content">
-                    <span className="step-title font-heading">IDENTIFICAÇÃO</span>
-                    {stepStatus(1) === 'done' && <span className="step-summary">{email}</span>}
-                  </div>
+            {/* ── Step 1: Identificação ── */}
+            <div className={`checkout-step step--${stepStatus(1)}`}>
+              <div className="step-header" onClick={() => stepStatus(1) === 'done' && setEtapa('email')}>
+                <span className="step-number">01</span>
+                <div className="step-header-content">
+                  <span className="step-title font-heading">IDENTIFICAÇÃO</span>
                   {stepStatus(1) === 'done' && (
-                    <button className="step-edit-btn" onClick={e => { e.stopPropagation(); setEtapa('email') }}>Editar</button>
+                    <span className="step-summary">{email}</span>
                   )}
                 </div>
-
-                {stepStatus(1) === 'active' && (
-                  <div className="step-body">
-                    <p style={{ fontSize: '13px', color: 'var(--foreground-secondary)', marginBottom: '24px' }}>
-                      Informe seu e-mail para continuar. Enviaremos um link de acesso — sem precisar de senha.
-                    </p>
-                    <form onSubmit={handleRequestLink} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                      <div className="form-field">
-                        <label>E-MAIL</label>
-                        <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="seu@email.com" required autoFocus />
-                      </div>
-                      {error && <p style={{ color: '#e53e3e', fontSize: '13px' }}>{error}</p>}
-                      <button type="submit" className="btn-primary" disabled={loading}>
-                        {loading ? 'ENVIANDO...' : 'CONTINUAR COM E-MAIL'}
-                      </button>
-                    </form>
-                  </div>
+                {stepStatus(1) === 'done' && (
+                  <button className="step-edit-btn" onClick={e => { e.stopPropagation(); setEtapa('email') }}>Editar</button>
                 )}
               </div>
 
-              {/* ── Step 2: Dados Pessoais ── */}
-              <div className={`checkout-step step--${stepStatus(2)}`}>
-                <div className="step-header" onClick={() => stepStatus(2) === 'done' && setEtapa('dados')}>
-                  <span className="step-number">02</span>
-                  <div className="step-header-content">
-                    <span className="step-title font-heading">DADOS PESSOAIS</span>
-                    {stepStatus(2) === 'done' && (
-                      <span className="step-summary">{dados.nome} {dados.sobrenome} · {dados.telefone}</span>
-                    )}
-                  </div>
-                  {stepStatus(2) === 'done' && (
-                    <button className="step-edit-btn" onClick={e => { e.stopPropagation(); setEtapa('dados') }}>Editar</button>
-                  )}
+              {stepStatus(1) === 'active' && (
+                <div className="step-body">
+                  <p style={{ fontSize: '13px', color: 'var(--foreground-secondary)', marginBottom: '24px' }}>
+                    Informe seu e-mail para continuar. Se você já tem conta, preencheremos seus dados automaticamente.
+                  </p>
+                  <form onSubmit={handleIniciarCheckout} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                    <div className="form-field">
+                      <label>E-MAIL</label>
+                      <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="seu@email.com" required autoFocus />
+                    </div>
+                    {error && <p style={{ color: '#e53e3e', fontSize: '13px' }}>{error}</p>}
+                    <button type="submit" className="btn-primary" disabled={loading}>
+                      {loading ? 'IDENTIFICANDO...' : 'CONTINUAR'}
+                    </button>
+                  </form>
                 </div>
-
-                {stepStatus(2) === 'active' && (
-                  <div className="step-body">
-                    <form onSubmit={handleDados} style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-                      <div className="form-row">
-                        <div className="form-field">
-                          <label>NOME</label>
-                          <input value={dados.nome} onChange={e => setDados(d => ({ ...d, nome: e.target.value }))} placeholder="Nome" required autoFocus />
-                        </div>
-                        <div className="form-field">
-                          <label>SOBRENOME</label>
-                          <input value={dados.sobrenome} onChange={e => setDados(d => ({ ...d, sobrenome: e.target.value }))} placeholder="Sobrenome" required />
-                        </div>
-                      </div>
-                      <div className="form-row">
-                        <div className="form-field">
-                          <label>TELEFONE</label>
-                          <input value={dados.telefone} onChange={e => setDados(d => ({ ...d, telefone: e.target.value }))} placeholder="(11) 99999-9999" required />
-                        </div>
-                        <div className="form-field">
-                          <label>CPF</label>
-                          <input value={dados.cpf} onChange={e => setDados(d => ({ ...d, cpf: e.target.value }))} placeholder="000.000.000-00" required />
-                        </div>
-                      </div>
-                      <button type="submit" className="btn-primary">IR PARA ENTREGA</button>
-                    </form>
-                  </div>
-                )}
-              </div>
-
-              {/* ── Step 3: Entrega ── */}
-              <div className={`checkout-step step--${stepStatus(3)}`}>
-                <div className="step-header" onClick={() => stepStatus(3) === 'done' && setEtapa('entrega')}>
-                  <span className="step-number">03</span>
-                  <div className="step-header-content">
-                    <span className="step-title font-heading">ENTREGA</span>
-                    {stepStatus(3) === 'done' && resumoEndereco && (
-                      <span className="step-summary">{resumoEndereco}</span>
-                    )}
-                  </div>
-                  {stepStatus(3) === 'done' && (
-                    <button className="step-edit-btn" onClick={e => { e.stopPropagation(); setEtapa('entrega') }}>Editar</button>
-                  )}
-                </div>
-
-                {stepStatus(3) === 'active' && (
-                  <div className="step-body">
-                    <form onSubmit={handleEntrega} style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-
-                      {/* Endereços salvos */}
-                      {enderecosSalvos.length > 0 && !usandoNovoEndereco && (
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                          {enderecosSalvos.map(end => (
-                            <label
-                              key={end.id}
-                              style={{
-                                display: 'flex', alignItems: 'flex-start', gap: '12px',
-                                padding: '14px 16px', border: `1px solid ${enderecoSelecionadoId === end.id ? 'var(--foreground-primary)' : 'var(--border-light)'}`,
-                                cursor: 'pointer',
-                              }}
-                            >
-                              <input
-                                type="radio"
-                                name="endereco"
-                                checked={enderecoSelecionadoId === end.id}
-                                onChange={() => setEnderecoSelecionadoId(end.id)}
-                                style={{ marginTop: '2px', flexShrink: 0 }}
-                              />
-                              <div>
-                                <p style={{ fontSize: '13px', fontWeight: 500 }}>
-                                  {end.logradouro}, {end.numero}{end.complemento ? `, ${end.complemento}` : ''}
-                                </p>
-                                <p style={{ fontSize: '12px', color: 'var(--foreground-secondary)', marginTop: '2px' }}>
-                                  {end.bairro} · {end.cidade}/{end.estado} · CEP {end.cep}
-                                </p>
-                                {end.padrao && (
-                                  <span style={{ fontSize: '10px', color: 'var(--foreground-tertiary)', display: 'flex', alignItems: 'center', gap: '4px', marginTop: '4px' }}>
-                                    <CheckCircle size={10} /> Endereço padrão
-                                  </span>
-                                )}
-                              </div>
-                            </label>
-                          ))}
-
-                          <button
-                            type="button"
-                            onClick={() => { setUsandoNovoEndereco(true); setEnderecoForm(ENDERECO_VAZIO) }}
-                            style={{ alignSelf: 'flex-start', fontSize: '12px', color: 'var(--foreground-secondary)', background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline', padding: 0 }}
-                          >
-                            + Usar outro endereço
-                          </button>
-
-                          <button type="submit" className="btn-primary">IR PARA PAGAMENTO</button>
-                        </div>
-                      )}
-
-                      {/* Formulário de novo endereço */}
-                      {(enderecosSalvos.length === 0 || usandoNovoEndereco) && (
-                        <>
-                          {usandoNovoEndereco && (
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                              <span style={{ fontSize: '13px', color: 'var(--foreground-secondary)' }}>Novo endereço</span>
-                              <button type="button" onClick={() => setUsandoNovoEndereco(false)} style={{ fontSize: '12px', color: 'var(--foreground-secondary)', background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline' }}>
-                                Usar endereço salvo
-                              </button>
-                            </div>
-                          )}
-
-                          <div className="form-row">
-                            <div className="form-field w-fixed-md">
-                              <label>CEP{cepLoading && <span style={{ marginLeft: 8, fontWeight: 400, letterSpacing: 0 }}>buscando...</span>}</label>
-                              <input value={enderecoForm.cep} onChange={e => handleCep(e.target.value)} placeholder="00000-000" maxLength={9} required autoFocus />
-                              {cepError && <span style={{ fontSize: '11px', color: '#e53e3e' }}>{cepError}</span>}
-                            </div>
-                            <div className="form-field">
-                              <label>LOGRADOURO</label>
-                              <input value={enderecoForm.logradouro} onChange={e => setEnderecoForm(d => ({ ...d, logradouro: e.target.value }))} placeholder="Rua, Avenida..." required />
-                            </div>
-                          </div>
-                          <div className="form-row">
-                            <div className="form-field w-fixed-sm">
-                              <label>NÚMERO</label>
-                              <input value={enderecoForm.numero} onChange={e => setEnderecoForm(d => ({ ...d, numero: e.target.value }))} placeholder="123" required />
-                            </div>
-                            <div className="form-field">
-                              <label>COMPLEMENTO</label>
-                              <input value={enderecoForm.complemento} onChange={e => setEnderecoForm(d => ({ ...d, complemento: e.target.value }))} placeholder="Apto, Bloco... (opcional)" />
-                            </div>
-                          </div>
-                          <div className="form-row">
-                            <div className="form-field">
-                              <label>BAIRRO</label>
-                              <input value={enderecoForm.bairro} onChange={e => setEnderecoForm(d => ({ ...d, bairro: e.target.value }))} placeholder="Bairro" required />
-                            </div>
-                            <div className="form-field">
-                              <label>CIDADE</label>
-                              <input value={enderecoForm.cidade} onChange={e => setEnderecoForm(d => ({ ...d, cidade: e.target.value }))} placeholder="Cidade" required />
-                            </div>
-                            <div className="form-field w-fixed-sm">
-                              <label>ESTADO</label>
-                              <input value={enderecoForm.estado} onChange={e => setEnderecoForm(d => ({ ...d, estado: e.target.value }))} placeholder="SP" maxLength={2} required />
-                            </div>
-                          </div>
-                          <button type="submit" className="btn-primary">IR PARA PAGAMENTO</button>
-                        </>
-                      )}
-
-                    </form>
-                  </div>
-                )}
-              </div>
-
-              {/* ── Step 4: Pagamento ── */}
-              <div className={`checkout-step step--${stepStatus(4)}`}>
-                <div className="step-header">
-                  <span className="step-number">04</span>
-                  <div className="step-header-content">
-                    <span className="step-title font-heading">PAGAMENTO</span>
-                  </div>
-                </div>
-
-                {stepStatus(4) === 'active' && (
-                  <div className="step-body">
-                    {items.length === 0 ? (
-                      <p style={{ fontSize: '13px', color: 'var(--foreground-secondary)' }}>
-                        Seu carrinho está vazio.{' '}
-                        <Link href="/produtos" style={{ textDecoration: 'underline' }}>Ver coleção</Link>
-                      </p>
-                    ) : (
-                      <MpPayment
-                        initialization={{ amount: total() }}
-                        customization={{
-                          paymentMethods: {
-                            creditCard: 'all',
-                            debitCard: 'all',
-                            ticket: 'all',
-                            bankTransfer: 'all',
-                          },
-                        }}
-                        onSubmit={handlePagar}
-                        onError={err => console.error('[MP Brick]', err)}
-                      />
-                    )}
-                  </div>
-                )}
-              </div>
-
+              )}
             </div>
-          )}
+
+            {/* ── Step 2: Dados Pessoais ── */}
+            <div className={`checkout-step step--${stepStatus(2)}`}>
+              <div className="step-header" onClick={() => stepStatus(2) === 'done' && setEtapa('dados')}>
+                <span className="step-number">02</span>
+                <div className="step-header-content">
+                  <span className="step-title font-heading">DADOS PESSOAIS</span>
+                  {stepStatus(2) === 'done' && (
+                    <span className="step-summary">{dados.nome} {dados.sobrenome} · {dados.telefone}</span>
+                  )}
+                </div>
+                {stepStatus(2) === 'done' && (
+                  <button className="step-edit-btn" onClick={e => { e.stopPropagation(); setEtapa('dados') }}>Editar</button>
+                )}
+              </div>
+
+              {stepStatus(2) === 'active' && (
+                <div className="step-body">
+                  {tipoIdentificacao === 'existente' && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 14px', background: '#F0FDF4', border: '1px solid #BBF7D0', marginBottom: '20px', fontSize: '13px', color: '#15803D' }}>
+                      <CheckCircle size={14} />
+                      Identificamos sua conta. Verifique seus dados abaixo.
+                    </div>
+                  )}
+                  <form onSubmit={handleDados} style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                    <div className="form-row">
+                      <div className="form-field">
+                        <label>NOME</label>
+                        <input value={dados.nome} onChange={e => setDados(d => ({ ...d, nome: e.target.value }))} placeholder="Nome" required autoFocus />
+                      </div>
+                      <div className="form-field">
+                        <label>SOBRENOME</label>
+                        <input value={dados.sobrenome} onChange={e => setDados(d => ({ ...d, sobrenome: e.target.value }))} placeholder="Sobrenome" required />
+                      </div>
+                    </div>
+                    <div className="form-row">
+                      <div className="form-field">
+                        <label>TELEFONE</label>
+                        <input value={dados.telefone} onChange={e => setDados(d => ({ ...d, telefone: e.target.value }))} placeholder="(11) 99999-9999" required />
+                      </div>
+                      <div className="form-field">
+                        <label>CPF</label>
+                        <input value={dados.cpf} onChange={e => setDados(d => ({ ...d, cpf: e.target.value }))} placeholder="000.000.000-00" required />
+                      </div>
+                    </div>
+                    <button type="submit" className="btn-primary">IR PARA ENTREGA</button>
+                  </form>
+                </div>
+              )}
+            </div>
+
+            {/* ── Step 3: Entrega ── */}
+            <div className={`checkout-step step--${stepStatus(3)}`}>
+              <div className="step-header" onClick={() => stepStatus(3) === 'done' && setEtapa('entrega')}>
+                <span className="step-number">03</span>
+                <div className="step-header-content">
+                  <span className="step-title font-heading">ENTREGA</span>
+                  {stepStatus(3) === 'done' && resumoEndereco && (
+                    <span className="step-summary">{resumoEndereco}</span>
+                  )}
+                </div>
+                {stepStatus(3) === 'done' && (
+                  <button className="step-edit-btn" onClick={e => { e.stopPropagation(); setEtapa('entrega') }}>Editar</button>
+                )}
+              </div>
+
+              {stepStatus(3) === 'active' && (
+                <div className="step-body">
+                  <form onSubmit={handleEntrega} style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+
+                    {enderecosSalvos.length > 0 && !usandoNovoEndereco && (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                        {enderecosSalvos.map(end => (
+                          <label
+                            key={end.id}
+                            style={{
+                              display: 'flex', alignItems: 'flex-start', gap: '12px',
+                              padding: '14px 16px', border: `1px solid ${enderecoSelecionadoId === end.id ? 'var(--foreground-primary)' : 'var(--border-light)'}`,
+                              cursor: 'pointer',
+                            }}
+                          >
+                            <input
+                              type="radio"
+                              name="endereco"
+                              checked={enderecoSelecionadoId === end.id}
+                              onChange={() => setEnderecoSelecionadoId(end.id)}
+                              style={{ marginTop: '2px', flexShrink: 0 }}
+                            />
+                            <div>
+                              <p style={{ fontSize: '13px', fontWeight: 500 }}>
+                                {end.logradouro}, {end.numero}{end.complemento ? `, ${end.complemento}` : ''}
+                              </p>
+                              <p style={{ fontSize: '12px', color: 'var(--foreground-secondary)', marginTop: '2px' }}>
+                                {end.bairro} · {end.cidade}/{end.estado} · CEP {end.cep}
+                              </p>
+                              {end.padrao && (
+                                <span style={{ fontSize: '10px', color: 'var(--foreground-tertiary)', display: 'flex', alignItems: 'center', gap: '4px', marginTop: '4px' }}>
+                                  <CheckCircle size={10} /> Endereço padrão
+                                </span>
+                              )}
+                            </div>
+                          </label>
+                        ))}
+
+                        <button
+                          type="button"
+                          onClick={() => { setUsandoNovoEndereco(true); setEnderecoForm(ENDERECO_VAZIO) }}
+                          style={{ alignSelf: 'flex-start', fontSize: '12px', color: 'var(--foreground-secondary)', background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline', padding: 0 }}
+                        >
+                          + Usar outro endereço
+                        </button>
+
+                        <button type="submit" className="btn-primary">IR PARA PAGAMENTO</button>
+                      </div>
+                    )}
+
+                    {(enderecosSalvos.length === 0 || usandoNovoEndereco) && (
+                      <>
+                        {usandoNovoEndereco && (
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <span style={{ fontSize: '13px', color: 'var(--foreground-secondary)' }}>Novo endereço</span>
+                            <button type="button" onClick={() => setUsandoNovoEndereco(false)} style={{ fontSize: '12px', color: 'var(--foreground-secondary)', background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline' }}>
+                              Usar endereço salvo
+                            </button>
+                          </div>
+                        )}
+
+                        <div className="form-row">
+                          <div className="form-field w-fixed-md">
+                            <label>CEP{cepLoading && <span style={{ marginLeft: 8, fontWeight: 400, letterSpacing: 0 }}>buscando...</span>}</label>
+                            <input value={enderecoForm.cep} onChange={e => handleCep(e.target.value)} placeholder="00000-000" maxLength={9} required autoFocus />
+                            {cepError && <span style={{ fontSize: '11px', color: '#e53e3e' }}>{cepError}</span>}
+                          </div>
+                          <div className="form-field">
+                            <label>LOGRADOURO</label>
+                            <input value={enderecoForm.logradouro} onChange={e => setEnderecoForm(d => ({ ...d, logradouro: e.target.value }))} placeholder="Rua, Avenida..." required />
+                          </div>
+                        </div>
+                        <div className="form-row">
+                          <div className="form-field w-fixed-sm">
+                            <label>NÚMERO</label>
+                            <input value={enderecoForm.numero} onChange={e => setEnderecoForm(d => ({ ...d, numero: e.target.value }))} placeholder="123" required />
+                          </div>
+                          <div className="form-field">
+                            <label>COMPLEMENTO</label>
+                            <input value={enderecoForm.complemento} onChange={e => setEnderecoForm(d => ({ ...d, complemento: e.target.value }))} placeholder="Apto, Bloco... (opcional)" />
+                          </div>
+                        </div>
+                        <div className="form-row">
+                          <div className="form-field">
+                            <label>BAIRRO</label>
+                            <input value={enderecoForm.bairro} onChange={e => setEnderecoForm(d => ({ ...d, bairro: e.target.value }))} placeholder="Bairro" required />
+                          </div>
+                          <div className="form-field">
+                            <label>CIDADE</label>
+                            <input value={enderecoForm.cidade} onChange={e => setEnderecoForm(d => ({ ...d, cidade: e.target.value }))} placeholder="Cidade" required />
+                          </div>
+                          <div className="form-field w-fixed-sm">
+                            <label>ESTADO</label>
+                            <input value={enderecoForm.estado} onChange={e => setEnderecoForm(d => ({ ...d, estado: e.target.value }))} placeholder="SP" maxLength={2} required />
+                          </div>
+                        </div>
+                        <button type="submit" className="btn-primary">IR PARA PAGAMENTO</button>
+                      </>
+                    )}
+
+                  </form>
+                </div>
+              )}
+            </div>
+
+            {/* ── Step 4: Pagamento ── */}
+            <div className={`checkout-step step--${stepStatus(4)}`}>
+              <div className="step-header">
+                <span className="step-number">04</span>
+                <div className="step-header-content">
+                  <span className="step-title font-heading">PAGAMENTO</span>
+                </div>
+              </div>
+
+              {stepStatus(4) === 'active' && (
+                <div className="step-body">
+                  {items.length === 0 ? (
+                    <p style={{ fontSize: '13px', color: 'var(--foreground-secondary)' }}>
+                      Seu carrinho está vazio.{' '}
+                      <Link href="/produtos" style={{ textDecoration: 'underline' }}>Ver coleção</Link>
+                    </p>
+                  ) : (
+                    <MpPayment
+                      initialization={{ amount: total() }}
+                      customization={{
+                        paymentMethods: {
+                          creditCard: 'all',
+                          debitCard: 'all',
+                          ticket: 'all',
+                          bankTransfer: 'all',
+                        },
+                      }}
+                      onSubmit={handlePagar}
+                      onError={err => console.error('[MP Brick]', err)}
+                    />
+                  )}
+                </div>
+              )}
+            </div>
+
+          </div>
         </div>
 
         {/* ── Resumo ── */}
