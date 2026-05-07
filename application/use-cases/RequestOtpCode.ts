@@ -2,54 +2,57 @@ import crypto from 'crypto'
 import { prisma } from '@/infra/database/prisma'
 import { sendEmail } from '@/src/shared/email/sendEmail'
 import { ValidationError } from '@/src/domain/errors/ValidationError'
-import { NotFoundError } from '@/src/domain/errors/NotFoundError'
+import { ResolverIdentidade, type IdentidadeTipo } from './ResolverIdentidade'
 
 const TTL_MINUTES = 10
-const MAX_REQUESTS_PER_HOUR = 5
+const MAX_PER_HORA = 5
 
 function hashCode(raw: string): string {
   return crypto.createHash('sha256').update(raw).digest('hex')
 }
 
 function generateOtp(): string {
-  return String(Math.floor(100000 + crypto.randomInt(900000)))
+  return String(crypto.randomInt(100000, 1000000))
 }
 
 export interface RequestOtpResult {
-  email: string        // e-mail real (para o verify)
-  emailMascarado: string // exibido na UI
+  tipo: IdentidadeTipo
+  email: string           // real (para o verify)
+  emailMascarado: string  // para exibir na UI
+  mensagem?: string       // contexto para o usuário
 }
 
-function maskEmail(email: string): string {
-  const [local, domain] = email.split('@')
-  return `${local[0]}***@${domain}`
-}
+const resolver = new ResolverIdentidade()
 
 export class RequestOtpCode {
   async execute(identifier: string): Promise<RequestOtpResult> {
-    const isEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(identifier)
+    const identidade = await resolver.execute(identifier)
 
-    const usuario = isEmail
-      ? await prisma.usuario.findUnique({ where: { email: identifier } })
-      : await prisma.usuario.findFirst({ where: { cpf: identifier, ativo: true } })
-
-    if (!usuario) {
-      throw new NotFoundError('Nenhuma conta encontrada com este e-mail ou CPF.')
+    // Não tem conta e não conseguimos resolver → retorna sem enviar código
+    if (identidade.tipo === 'sem_conta') {
+      return {
+        tipo: 'sem_conta',
+        email: '',
+        emailMascarado: '',
+        mensagem: identidade.mensagem,
+      }
     }
 
-    // Rate limit: máximo de requisições por hora
+    const { email, emailMascarado, mensagem } = identidade as Required<Pick<typeof identidade, 'email' | 'emailMascarado'>> & typeof identidade
+
+    // Rate limit
     const umaHoraAtras = new Date(Date.now() - 60 * 60 * 1000)
     const recentes = await prisma.otpCode.count({
-      where: { email: usuario.email, createdAt: { gte: umaHoraAtras } },
+      where: { email, createdAt: { gte: umaHoraAtras } },
     })
 
-    if (recentes >= MAX_REQUESTS_PER_HOUR) {
+    if (recentes >= MAX_PER_HORA) {
       throw new ValidationError('Muitas tentativas. Aguarde 1 hora para solicitar um novo código.')
     }
 
     // Invalida códigos anteriores não usados
     await prisma.otpCode.updateMany({
-      where: { email: usuario.email, usedAt: null },
+      where: { email, usedAt: null },
       data: { usedAt: new Date() },
     })
 
@@ -58,11 +61,11 @@ export class RequestOtpCode {
     const expiresAt = new Date(Date.now() + TTL_MINUTES * 60 * 1000)
 
     await prisma.otpCode.create({
-      data: { email: usuario.email, code: hashedCode, expiresAt },
+      data: { email, code: hashedCode, expiresAt },
     })
 
     await sendEmail({
-      to: usuario.email,
+      to: email,
       subject: `${rawCode} é seu código de acesso — 1337`,
       html: `
         <div style="font-family:sans-serif;max-width:480px;margin:0 auto">
@@ -76,11 +79,15 @@ export class RequestOtpCode {
       `,
     })
 
-    // Em dev: log no console para facilitar testes
     if (process.env.NODE_ENV !== 'production') {
-      console.log(`[OTP DEV] Código para ${usuario.email}: ${rawCode}`)
+      console.log(`[OTP DEV] ${email}: ${rawCode}`)
     }
 
-    return { email: usuario.email, emailMascarado: maskEmail(usuario.email) }
+    return {
+      tipo: identidade.tipo,
+      email,
+      emailMascarado: emailMascarado!,
+      mensagem,
+    }
   }
 }

@@ -15,8 +15,9 @@ export default function LoginPage() {
 
   const [etapa, setEtapa] = useState<Etapa>('identifier')
   const [identifier, setIdentifier] = useState('')
-  const [email, setEmail] = useState('')           // email real para o verify
-  const [emailDisplay, setEmailDisplay] = useState('') // mascarado para exibir
+  const [email, setEmail] = useState('')
+  const [emailDisplay, setEmailDisplay] = useState('')
+  const [otpContexto, setOtpContexto] = useState<string | null>(null) // mensagem contextual
   const [otp, setOtp] = useState(['', '', '', '', '', ''])
   const [senha, setSenha] = useState('')
   const [loading, setLoading] = useState(false)
@@ -49,8 +50,15 @@ export default function LoginPage() {
 
     if (!res.ok) { setError(json.error?.message ?? 'Erro ao enviar código.'); return }
 
+    // CPF informado mas sem conta — mostra mensagem, não avança
+    if (json.data.tipo === 'sem_conta') {
+      setError(json.data.mensagem ?? 'Nenhuma conta encontrada. Tente com o seu e-mail.')
+      return
+    }
+
     setEmail(json.data.email)
     setEmailDisplay(json.data.emailMascarado)
+    setOtpContexto(json.data.mensagem ?? null)
     setEtapa('otp')
     setCountdown(60)
     setTimeout(() => otpRefs.current[0]?.focus(), 100)
@@ -187,6 +195,11 @@ export default function LoginPage() {
             </button>
 
             <h1 className="font-heading" style={{ fontSize: '40px', marginBottom: '8px' }}>CÓDIGO DE ACESSO</h1>
+            {otpContexto && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 14px', background: '#EFF6FF', marginBottom: '16px', fontSize: '13px', color: '#1E40AF' }}>
+                {otpContexto}
+              </div>
+            )}
             <p style={{ color: 'var(--foreground-secondary)', fontSize: '14px', marginBottom: '40px' }}>
               Enviamos um código de 6 dígitos para <strong>{emailDisplay}</strong>.
             </p>
