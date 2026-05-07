@@ -72,6 +72,18 @@ model MagicToken {
   @@index([email])
 }
 
+model OtpCode {
+  id        Int       @id @default(autoincrement())
+  email     String
+  code      String    // SHA-256 do código de 6 dígitos
+  expiresAt DateTime
+  usedAt    DateTime?
+  tentativas Int      @default(0)
+  createdAt DateTime  @default(now())
+
+  @@index([email])
+}
+
 model ItemPedido {
   id         Int     @id @default(autoincrement())
   quantidade Int
