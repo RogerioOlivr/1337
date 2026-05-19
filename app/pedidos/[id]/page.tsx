@@ -1,10 +1,10 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef, useCallback } from 'react'
 import { useParams, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import Image from 'next/image'
-import { ArrowLeft, CheckCircle, XCircle, Clock } from 'lucide-react'
+import { ArrowLeft, CheckCircle, XCircle, Clock, UserCheck } from 'lucide-react'
 
 interface ItemPedido {
   id: number
@@ -22,6 +22,8 @@ interface Pedido {
   createdAt: string
   itens: ItemPedido[]
 }
+
+type OtpFase = 'enviando' | 'aguardando' | 'verificado' | 'erro'
 
 const STATUS_LABEL: Record<string, string> = {
   pendente:  'PENDENTE',
@@ -69,23 +71,88 @@ export default function PedidoDetalhe() {
   const [loading, setLoading] = useState(true)
   const [erro, setErro] = useState<string | null>(null)
 
+  // OTP pós-compra
+  const [otpFase, setOtpFase] = useState<OtpFase>('enviando')
+  const [otpEmail, setOtpEmail] = useState('')
+  const [otpEmailMascarado, setOtpEmailMascarado] = useState('')
+  const [otpDigits, setOtpDigits] = useState(['', '', '', '', '', ''])
+  const [otpError, setOtpError] = useState<string | null>(null)
+  const otpRefs = useRef<(HTMLInputElement | null)[]>([])
+
   const fmt = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
   const fmtDate = (s: string) =>
     new Date(s).toLocaleDateString('pt-BR', { day: '2-digit', month: 'long', year: 'numeric' })
 
   useEffect(() => {
     fetch(`/api/pedidos/${id}`)
-      .then((r) => r.json())
-      .then((j) => {
+      .then(r => r.json())
+      .then(j => {
         if (j.success) setPedido(j.data)
         else setErro(j.error?.message ?? 'Erro ao carregar pedido.')
         setLoading(false)
       })
-      .catch(() => {
-        setErro('Erro de conexão.')
-        setLoading(false)
-      })
+      .catch(() => { setErro('Erro de conexão.'); setLoading(false) })
   }, [id])
+
+  // Auto-envia OTP quando o pedido foi confirmado com sucesso
+  const enviarOtp = useCallback(() => {
+    setOtpFase('enviando')
+    setOtpError(null)
+
+    fetch('/api/auth/otp/enviar', { method: 'POST' })
+      .then(r => r.json())
+      .then(j => {
+        if (!j.success) { setOtpFase('erro'); return }
+        setOtpEmail(j.data.email)
+        setOtpEmailMascarado(j.data.emailMascarado)
+        setOtpFase('aguardando')
+        setTimeout(() => otpRefs.current[0]?.focus(), 100)
+      })
+      .catch(() => setOtpFase('erro'))
+  }, [])
+
+  useEffect(() => {
+    if (retorno === 'sucesso' && pedido) enviarOtp()
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [retorno, pedido])
+
+  const handleVerifyOtp = useCallback(async (digits?: string[]) => {
+    const code = (digits ?? otpDigits).join('')
+    if (code.length < 6) return
+
+    const res = await fetch('/api/auth/otp/verify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: otpEmail, code }),
+    })
+
+    const json = await res.json()
+    if (!res.ok) { setOtpError(json.error?.message ?? 'Código inválido.'); return }
+
+    setOtpFase('verificado')
+  }, [otpDigits, otpEmail])
+
+  const handleOtpChange = (index: number, value: string) => {
+    if (value.length > 1) {
+      const digits = value.replace(/\D/g, '').slice(0, 6).split('')
+      const newOtp = [...otpDigits]
+      digits.forEach((d, i) => { if (index + i < 6) newOtp[index + i] = d })
+      setOtpDigits(newOtp)
+      otpRefs.current[Math.min(index + digits.length, 5)]?.focus()
+      if (newOtp.every(d => d !== '')) handleVerifyOtp(newOtp)
+      return
+    }
+    const digit = value.replace(/\D/g, '')
+    const newOtp = [...otpDigits]
+    newOtp[index] = digit
+    setOtpDigits(newOtp)
+    if (digit && index < 5) otpRefs.current[index + 1]?.focus()
+    if (newOtp.every(d => d !== '')) handleVerifyOtp(newOtp)
+  }
+
+  const handleOtpKeyDown = (index: number, e: React.KeyboardEvent) => {
+    if (e.key === 'Backspace' && !otpDigits[index] && index > 0) otpRefs.current[index - 1]?.focus()
+  }
 
   if (loading) {
     return (
@@ -114,7 +181,7 @@ export default function PedidoDetalhe() {
       {banner && (
         <div style={{
           display: 'flex', alignItems: 'flex-start', gap: '12px',
-          padding: '16px 20px', marginBottom: '32px',
+          padding: '16px 20px', marginBottom: '24px',
           background: `${banner.cor}12`, border: `1px solid ${banner.cor}40`,
           color: banner.cor,
         }}>
@@ -123,6 +190,100 @@ export default function PedidoDetalhe() {
             <p style={{ fontWeight: 700, fontSize: '13px', marginBottom: '2px' }}>{banner.titulo}</p>
             <p style={{ fontSize: '13px', opacity: 0.85 }}>{banner.mensagem}</p>
           </div>
+        </div>
+      )}
+
+      {/* ── Seção OTP pós-compra ── */}
+      {retorno === 'sucesso' && (
+        <div style={{
+          padding: '24px', marginBottom: '32px',
+          border: '1px solid var(--border-light)',
+          background: 'var(--surface-primary)',
+        }}>
+          {otpFase === 'enviando' && (
+            <p style={{ fontSize: '13px', color: 'var(--foreground-secondary)' }}>
+              Enviando código de acesso...
+            </p>
+          )}
+
+          {otpFase === 'aguardando' && (
+            <>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '12px' }}>
+                <UserCheck size={18} style={{ color: 'var(--foreground-primary)', flexShrink: 0 }} />
+                <h3 className="font-heading" style={{ fontSize: '18px' }}>ACESSE SUA CONTA</h3>
+              </div>
+              <p style={{ fontSize: '13px', color: 'var(--foreground-secondary)', marginBottom: '20px' }}>
+                Enviamos um código de 6 dígitos para <strong>{otpEmailMascarado}</strong>.
+                Use-o para acessar seus pedidos e dados a qualquer momento.
+              </p>
+
+              <div style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
+                {otpDigits.map((digit, i) => (
+                  <input
+                    key={i}
+                    ref={el => { otpRefs.current[i] = el }}
+                    type="text"
+                    inputMode="numeric"
+                    maxLength={6}
+                    value={digit}
+                    onChange={e => handleOtpChange(i, e.target.value)}
+                    onKeyDown={e => handleOtpKeyDown(i, e)}
+                    onFocus={e => e.target.select()}
+                    style={{
+                      width: '48px', height: '56px', textAlign: 'center',
+                      fontSize: '22px', fontWeight: 700,
+                      fontFamily: 'var(--font-geist-mono)',
+                      border: `2px solid ${digit ? 'var(--foreground-primary)' : 'var(--border-light)'}`,
+                      background: 'var(--surface-primary)', outline: 'none',
+                      transition: 'border-color 0.15s',
+                    }}
+                  />
+                ))}
+              </div>
+
+              {otpError && (
+                <p style={{ fontSize: '12px', color: '#e53e3e', marginBottom: '12px' }}>{otpError}</p>
+              )}
+
+              <button
+                onClick={() => { setOtpDigits(['','','','','','']); setOtpError(null); enviarOtp() }}
+                style={{ fontSize: '12px', color: 'var(--foreground-secondary)', background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline', padding: 0 }}
+              >
+                Reenviar código
+              </button>
+            </>
+          )}
+
+          {otpFase === 'verificado' && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+              <CheckCircle size={20} style={{ color: '#276749', flexShrink: 0 }} />
+              <div>
+                <p style={{ fontWeight: 700, fontSize: '13px', color: '#276749', marginBottom: '4px' }}>
+                  Conta confirmada!
+                </p>
+                <p style={{ fontSize: '13px', color: 'var(--foreground-secondary)' }}>
+                  Acompanhe seus pedidos em{' '}
+                  <Link href="/minha-conta/pedidos" style={{ color: 'var(--foreground-primary)', textDecoration: 'underline' }}>
+                    Minha Conta
+                  </Link>.
+                </p>
+              </div>
+            </div>
+          )}
+
+          {otpFase === 'erro' && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+              <p style={{ fontSize: '13px', color: 'var(--foreground-secondary)' }}>
+                Não foi possível enviar o código.{' '}
+                <button
+                  onClick={enviarOtp}
+                  style={{ color: 'var(--foreground-primary)', background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline', fontSize: '13px', padding: 0 }}
+                >
+                  Tentar novamente
+                </button>
+              </p>
+            </div>
+          )}
         </div>
       )}
 
@@ -160,16 +321,10 @@ export default function PedidoDetalhe() {
 
       {/* Itens */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', marginBottom: '32px' }}>
-        {pedido.itens.map((item) => (
+        {pedido.itens.map(item => (
           <div key={item.id} style={{ display: 'flex', gap: '16px', alignItems: 'center' }}>
             {item.imagemProduto ? (
-              <Image
-                src={item.imagemProduto}
-                alt={item.nomeProduto}
-                width={72}
-                height={72}
-                style={{ objectFit: 'cover', flexShrink: 0 }}
-              />
+              <Image src={item.imagemProduto} alt={item.nomeProduto} width={72} height={72} style={{ objectFit: 'cover', flexShrink: 0 }} />
             ) : (
               <div style={{ width: 72, height: 72, background: 'var(--surface-light)', flexShrink: 0 }} />
             )}
