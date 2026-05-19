@@ -30,19 +30,12 @@ export class FinalizarCheckoutAnonimo {
 
     const existente = await prisma.usuario.findUnique({
       where: { email: emailNorm },
-      select: { id: true, telefone: true },
+      select: { id: true },
     })
 
     if (existente) {
+      // Conta existente: apenas associa o pedido — nenhum dado do perfil é alterado
       usuarioId = existente.id
-
-      // Só preenche telefone se ainda estiver vazio (não sobrescreve dado real)
-      if (!existente.telefone && input.telefone) {
-        await prisma.usuario.update({
-          where: { id: usuarioId },
-          data: { telefone: input.telefone },
-        })
-      }
     } else {
       const senha = await bcrypt.hash(crypto.randomBytes(32).toString('hex'), 10)
 
