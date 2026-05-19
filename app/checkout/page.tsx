@@ -391,7 +391,7 @@ export default function CheckoutPage() {
                         onClick={() => setEtapa('dados')}
                         style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '13px', color: 'var(--foreground-secondary)', textDecoration: 'underline', padding: 0 }}
                       >
-                        Continuar como visitante
+                        Continuar compra
                       </button>
                       <button
                         onClick={() => { setIdentificacao(null); setError(null) }}
