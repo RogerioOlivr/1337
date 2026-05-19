@@ -56,6 +56,7 @@ export default function CheckoutPage() {
   const [otpDigits, setOtpDigits] = useState(['', '', '', '', '', ''])
   const [otpError, setOtpError] = useState<string | null>(null)
   const otpRefs = useRef<(HTMLInputElement | null)[]>([])
+  const contextoJaAplicado = useRef(false)
 
   // Dados do formulário
   const [dados, setDados] = useState<DadosPessoais>({ nome: '', sobrenome: '', telefone: '', cpf: '' })
@@ -78,9 +79,10 @@ export default function CheckoutPage() {
     if (!checked) fetchSession()
   }, [checked, fetchSession])
 
-  // Usuário já autenticado ao chegar no checkout → pula email, carrega dados
+  // Usuário já autenticado ao chegar no checkout → pula email, carrega dados (só uma vez)
   useEffect(() => {
-    if (!checked || !user || etapa !== 'email') return
+    if (!checked || !user || contextoJaAplicado.current) return
+    contextoJaAplicado.current = true
     setEmail(user.email)
     fetch('/api/checkout/contexto')
       .then(r => r.json())
@@ -174,7 +176,8 @@ export default function CheckoutPage() {
     const json = await res.json()
     if (!res.ok) { setOtpError(json.error?.message ?? 'Código inválido.'); return }
 
-    // Autenticado: carrega dados salvos
+    // Autenticado: carrega dados salvos (marca como aplicado para não recarregar ao navegar)
+    contextoJaAplicado.current = true
     await fetchSession()
     const ctxRes = await fetch('/api/checkout/contexto')
     const ctxJson = await ctxRes.json()
