@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { persist, createJSONStorage } from 'zustand/middleware'
 
 export interface CartItem {
   produtoId: number
@@ -25,7 +26,9 @@ interface CartStore {
   count: () => number
 }
 
-export const useCartStore = create<CartStore>((set, get) => ({
+export const useCartStore = create<CartStore>()(
+  persist(
+    (set, get) => ({
   items: [],
   isOpen: false,
 
@@ -71,4 +74,11 @@ export const useCartStore = create<CartStore>((set, get) => ({
     get().items.reduce((acc, i) => acc + i.preco * i.quantidade, 0),
 
   count: () => get().items.reduce((acc, i) => acc + i.quantidade, 0),
-}))
+    }),
+    {
+      name: '1337-cart',
+      storage: createJSONStorage(() => localStorage),
+      partialize: (state) => ({ items: state.items }),
+    }
+  )
+)
