@@ -2,12 +2,10 @@
 
 import { useState } from 'react'
 import { useSessionStore } from '@/src/store/sessionStore'
-import { useRouter } from 'next/navigation'
 import { ShieldCheck, LogOut, KeyRound } from 'lucide-react'
 
 export default function SegurancaPage() {
   const { user, logout } = useSessionStore()
-  const router = useRouter()
   const [showSenha, setShowSenha] = useState(false)
   const [senhaAtual, setSenhaAtual] = useState('')
   const [novaSenha, setNovaSenha] = useState('')
@@ -17,8 +15,7 @@ export default function SegurancaPage() {
 
   const handleLogout = async () => {
     await logout()
-    router.push('/')
-    router.refresh()
+    window.location.href = '/'
   }
 
   const handleSenha = async (e: React.FormEvent) => {

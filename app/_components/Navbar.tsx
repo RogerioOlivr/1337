@@ -2,13 +2,11 @@
 
 import { useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
-import { useRouter } from 'next/navigation'
 import { Search, ShoppingBag, User, LogOut, Package, Settings, ChevronDown, LayoutDashboard } from 'lucide-react'
 import { useCartStore } from '@/src/store/cartStore'
 import { useSessionStore } from '@/src/store/sessionStore'
 
 export default function Navbar() {
-  const router = useRouter()
   const { toggleCart, count } = useCartStore()
   const { user, checked, fetchSession, logout } = useSessionStore()
   const itemCount = count()
@@ -16,10 +14,9 @@ export default function Navbar() {
   const [dropdownOpen, setDropdownOpen] = useState(false)
   const dropdownRef = useRef<HTMLDivElement>(null)
 
-  // Verifica sessão uma vez ao montar
   useEffect(() => {
-    fetchSession()
-  }, [fetchSession])
+    if (!checked) fetchSession()
+  }, [checked, fetchSession])
 
   // Fecha dropdown ao clicar fora
   useEffect(() => {
@@ -35,8 +32,7 @@ export default function Navbar() {
   const handleLogout = async () => {
     setDropdownOpen(false)
     await logout()
-    router.push('/')
-    router.refresh()
+    window.location.href = '/'
   }
 
   return (
