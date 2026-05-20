@@ -8,17 +8,18 @@ datasource db {
 }
 
 model Usuario {
-  id        Int        @id @default(autoincrement())
-  nome      String
-  email     String     @unique
-  senha     String
-  role      String     @default("user")
-  ativo     Boolean    @default(true)
-  cpf       String?  @unique
-  telefone  String?
-  createdAt DateTime   @default(now())
-  pedidos   Pedido[]
-  enderecos Endereco[]
+  id                  Int                  @id @default(autoincrement())
+  nome                String
+  email               String               @unique
+  senha               String
+  role                String               @default("user")
+  ativo               Boolean              @default(true)
+  cpf                 String?              @unique
+  telefone            String?
+  createdAt           DateTime             @default(now())
+  pedidos             Pedido[]
+  enderecos           Endereco[]
+  passwordResetTokens PasswordResetToken[]
 }
 
 model Endereco {
@@ -38,27 +39,80 @@ model Endereco {
 }
 
 model Produto {
-  id          Int          @id @default(autoincrement())
+  id          Int               @id @default(autoincrement())
   nome        String
-  descricao   String?      @db.Text
+  descricao   String?           @db.Text
   preco       Float
   imagem      String?
-  estoque     Int          @default(0)
-  ativo       Boolean      @default(true)
-  createdAt   DateTime     @default(now())
+  peso        Float             @default(0.25)
+  altura      Int               @default(1)
+  largura     Int               @default(24)
+  comprimento Int               @default(28)
+  ativo       Boolean           @default(true)
+  createdAt   DateTime          @default(now())
+  variantes   VarianteProduto[]
   itensPedido ItemPedido[]
 }
 
-model Pedido {
+model VarianteProduto {
   id          Int          @id @default(autoincrement())
-  status      String       @default("pendente")
-  total       Float
-  createdAt   DateTime     @default(now())
-  usuarioId   Int
-  usuario     Usuario      @relation(fields: [usuarioId], references: [id])
-  enderecoId  Int?
-  endereco    Endereco?    @relation(fields: [enderecoId], references: [id])
-  itens       ItemPedido[]
+  produtoId   Int
+  produto     Produto      @relation(fields: [produtoId], references: [id])
+  cor         String
+  tamanho     String
+  estoque     Int          @default(0)
+  ativo       Boolean      @default(true)
+  itensPedido ItemPedido[]
+
+  @@unique([produtoId, cor, tamanho])
+  @@index([produtoId])
+}
+
+model Pedido {
+  id           Int          @id @default(autoincrement())
+  status       String       @default("pendente")
+  total        Float
+  freteServico String?
+  freteValor   Float?
+  fretePrazo   Int?
+  desconto     Float?
+  cupomCodigo  String?
+  cupomId      Int?
+  cupom        Cupom?       @relation(fields: [cupomId], references: [id])
+  createdAt    DateTime     @default(now())
+  usuarioId    Int
+  usuario      Usuario      @relation(fields: [usuarioId], references: [id])
+  enderecoId   Int?
+  endereco     Endereco?    @relation(fields: [enderecoId], references: [id])
+  itens        ItemPedido[]
+}
+
+model Cupom {
+  id        Int       @id @default(autoincrement())
+  codigo    String    @unique
+  tipo      String    // 'percentual' | 'fixo'
+  valor     Float
+  minPedido Float?
+  maxUsos   Int?
+  usos      Int       @default(0)
+  ativo     Boolean   @default(true)
+  expiraEm  DateTime?
+  createdAt DateTime  @default(now())
+  pedidos   Pedido[]
+}
+
+model ItemPedido {
+  id         Int              @id @default(autoincrement())
+  quantidade Int
+  precoUnit  Float
+  cor        String?
+  tamanho    String?
+  pedidoId   Int
+  pedido     Pedido           @relation(fields: [pedidoId], references: [id])
+  produtoId  Int
+  produto    Produto          @relation(fields: [produtoId], references: [id])
+  varianteId Int?
+  variante   VarianteProduto? @relation(fields: [varianteId], references: [id])
 }
 
 model MagicToken {
@@ -73,23 +127,25 @@ model MagicToken {
 }
 
 model OtpCode {
-  id        Int       @id @default(autoincrement())
-  email     String
-  code      String    // SHA-256 do código de 6 dígitos
-  expiresAt DateTime
-  usedAt    DateTime?
-  tentativas Int      @default(0)
-  createdAt DateTime  @default(now())
+  id         Int       @id @default(autoincrement())
+  email      String
+  code       String
+  expiresAt  DateTime
+  usedAt     DateTime?
+  tentativas Int       @default(0)
+  createdAt  DateTime  @default(now())
 
   @@index([email])
 }
 
-model ItemPedido {
-  id         Int     @id @default(autoincrement())
-  quantidade Int
-  precoUnit  Float
-  pedidoId   Int
-  pedido     Pedido  @relation(fields: [pedidoId], references: [id])
-  produtoId  Int
-  produto    Produto @relation(fields: [produtoId], references: [id])
+model PasswordResetToken {
+  id        Int       @id @default(autoincrement())
+  token     String    @unique
+  usuarioId Int
+  usuario   Usuario   @relation(fields: [usuarioId], references: [id])
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([usuarioId])
 }

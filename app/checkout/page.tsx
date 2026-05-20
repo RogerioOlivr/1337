@@ -29,6 +29,14 @@ interface EnderecoSalvo {
   complemento: string | null; bairro: string; cidade: string; estado: string; padrao: boolean
 }
 
+interface OpcaoFrete {
+  id: number
+  nome: string
+  empresa: string
+  preco: number
+  prazo: number
+}
+
 const ENDERECO_VAZIO: EnderecoForm = {
   cep: '', logradouro: '', numero: '', complemento: '', bairro: '', cidade: '', estado: '',
 }
@@ -57,6 +65,8 @@ export default function CheckoutPage() {
   const [otpError, setOtpError] = useState<string | null>(null)
   const otpRefs = useRef<(HTMLInputElement | null)[]>([])
   const contextoJaAplicado = useRef(false)
+  const handlePagarRef = useRef<((data: IPaymentFormData) => Promise<void>) | null>(null)
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // Dados do formulário
   const [dados, setDados] = useState<DadosPessoais>({ nome: '', sobrenome: '', telefone: '', cpf: '' })
@@ -65,13 +75,92 @@ export default function CheckoutPage() {
   const [enderecoSelecionadoId, setEnderecoSelecionadoId] = useState<number | null>(null)
   const [usandoNovoEndereco, setUsandoNovoEndereco] = useState(false)
 
+  // Frete
+  const [opcoesFrete, setOpcoesFrete] = useState<OpcaoFrete[]>([])
+  const [freteSelecionado, setFreteSelecionado] = useState<OpcaoFrete | null>(null)
+  const [calculandoFrete, setCalculandoFrete] = useState(false)
+  const [freteError, setFreteError] = useState<string | null>(null)
+
+  // Cupom
+  const [cupomInput, setCupomInput] = useState('')
+  const [cupomAberto, setCupomAberto] = useState(false)
+  const [cupomLoading, setCupomLoading] = useState(false)
+  const [cupomAplicado, setCupomAplicado] = useState<{ codigo: string; desconto: number; descricao: string } | null>(null)
+  const [cupomError, setCupomError] = useState<string | null>(null)
+
   // UI
-  const [loading, setLoading] = useState(false)
+  const [verificandoEmail, setVerificandoEmail] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [cepLoading, setCepLoading] = useState(false)
   const [cepError, setCepError] = useState<string | null>(null)
+  const [brickMontado, setBrickMontado] = useState(false)
 
   const fmt = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
+  const totalComFrete = total() + (freteSelecionado?.preco ?? 0)
+  const totalFinal = Math.max(0, totalComFrete - (cupomAplicado?.desconto ?? 0))
+
+  // ─── Cupom ────────────────────────────────────────────────────────────────
+
+  const handleAplicarCupom = async () => {
+    const codigo = cupomInput.trim().toUpperCase()
+    if (!codigo) return
+    setCupomLoading(true)
+    setCupomError(null)
+    try {
+      const res = await fetch('/api/cupons/validar', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ codigo, subtotal: total() }),
+      })
+      const json = await res.json()
+      if (!res.ok) { setCupomError(json.error?.message ?? 'Cupom inválido.'); return }
+      setCupomAplicado(json.data)
+      setCupomAberto(false)
+      setCupomInput('')
+    } catch {
+      setCupomError('Erro de conexão. Tente novamente.')
+    } finally {
+      setCupomLoading(false)
+    }
+  }
+
+  // ─── Frete ────────────────────────────────────────────────────────────────
+
+  const calcularFrete = async (cepDigits: string) => {
+    if (items.length === 0) return
+    setCalculandoFrete(true)
+    setFreteError(null)
+    setOpcoesFrete([])
+    setFreteSelecionado(null)
+    try {
+      const res = await fetch('/api/frete/calcular', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          cep: cepDigits,
+          itens: items.map(i => ({ varianteId: i.varianteId, quantidade: i.quantidade })),
+        }),
+      })
+      const json = await res.json()
+      if (!res.ok) { setFreteError(json.error?.message ?? 'Erro ao calcular frete.'); return }
+      setOpcoesFrete(json.data.opcoes)
+      if (json.data.opcoes.length > 0) setFreteSelecionado(json.data.opcoes[0])
+    } catch {
+      setFreteError('Erro de conexão ao calcular frete.')
+    } finally {
+      setCalculandoFrete(false)
+    }
+  }
+
+  // Recalcula frete ao mudar endereço salvo ou entrar no step de entrega
+  useEffect(() => {
+    if (etapa !== 'entrega' || usandoNovoEndereco) return
+    const end = enderecosSalvos.find(e => e.id === enderecoSelecionadoId)
+    if (!end) return
+    const digits = end.cep.replace(/\D/g, '')
+    if (digits.length === 8) calcularFrete(digits)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [etapa, enderecoSelecionadoId, usandoNovoEndereco])
 
   // ─── Sessão ───────────────────────────────────────────────────────────────
 
@@ -79,7 +168,7 @@ export default function CheckoutPage() {
     if (!checked) fetchSession()
   }, [checked, fetchSession])
 
-  // Usuário já autenticado ao chegar no checkout → pula email, carrega dados (só uma vez)
+  // Usuário já autenticado ao chegar no checkout → pula email e dados, para em entrega
   useEffect(() => {
     if (!checked || !user || contextoJaAplicado.current) return
     contextoJaAplicado.current = true
@@ -94,6 +183,11 @@ export default function CheckoutPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [checked, user])
 
+  // Monta o brick de pagamento uma única vez — nunca desmonta
+  useEffect(() => {
+    if (etapa === 'pagamento') setBrickMontado(true)
+  }, [etapa])
+
   function aplicarContexto(
     u: { nome: string; email: string; cpf: string | null; telefone: string | null },
     enderecos: EnderecoSalvo[],
@@ -105,36 +199,52 @@ export default function CheckoutPage() {
     if (padrao) setEnderecoSelecionadoId(padrao.id)
 
     const completo = !!(u.telefone && u.cpf)
-    const temEndereco = enderecos.length > 0
-    if (completo && temEndereco) setEtapa('pagamento')
-    else if (completo) setEtapa('entrega')
+    // Sempre para no step de entrega para o usuário ver/confirmar o frete
+    if (completo) setEtapa('entrega')
     else setEtapa('dados')
   }
 
-  // ─── Step 1a: Verificar email (só identificação, sem autenticação) ────────
+  // ─── Step 1: Verificar email com debounce enquanto o usuário digita ─────────
 
-  const handleVerificarEmail = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setLoading(true)
+  useEffect(() => {
+    if (etapa !== 'email' || otpFase !== 'idle') return
+
+    setIdentificacao(null)
     setError(null)
 
-    const res = await fetch('/api/checkout/verificar', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: email.trim() }),
-    })
+    const emailTrimado = email.trim()
+    const emailValido = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailTrimado)
 
-    const json = await res.json()
-    setLoading(false)
+    if (!emailValido) {
+      setVerificandoEmail(false)
+      if (debounceRef.current) clearTimeout(debounceRef.current)
+      return
+    }
 
-    if (!res.ok) { setError(json.error?.message ?? 'Erro ao verificar e-mail.'); return }
+    setVerificandoEmail(true)
+    if (debounceRef.current) clearTimeout(debounceRef.current)
 
-    const tipo: 'existente' | 'novo' = json.data.tipo
-    setIdentificacao(tipo)
+    debounceRef.current = setTimeout(async () => {
+      try {
+        const res = await fetch('/api/checkout/verificar', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: emailTrimado }),
+        })
+        const json = await res.json()
+        setVerificandoEmail(false)
+        if (!res.ok) { setError(json.error?.message ?? 'Erro ao verificar e-mail.'); return }
+        setIdentificacao(json.data.tipo)
+        if (json.data.tipo === 'novo') setEtapa('dados')
+      } catch {
+        setVerificandoEmail(false)
+        setError('Erro de conexão. Tente novamente.')
+      }
+    }, 600)
 
-    if (tipo === 'novo') setEtapa('dados')
-    // Se 'existente': mostra painel "Compra rápida" — usuário decide
-  }
+    return () => { if (debounceRef.current) clearTimeout(debounceRef.current) }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [email, otpFase])
 
   // ─── Step 1b: OTP inline ("Entrar com código") ───────────────────────────
 
@@ -209,7 +319,7 @@ export default function CheckoutPage() {
 
   // ─── Step 2: Dados pessoais ───────────────────────────────────────────────
 
-  const handleDados = async (e: React.FormEvent) => {
+  const handleDados = async (e: React.SubmitEvent<HTMLFormElement>) => {
     e.preventDefault()
     if (user) {
       await fetch('/api/perfil', {
@@ -223,34 +333,22 @@ export default function CheckoutPage() {
 
   // ─── Step 3: Entrega ──────────────────────────────────────────────────────
 
-  const handleEntrega = async (e: React.FormEvent) => {
+  const handleEntrega = (e: React.SubmitEvent<HTMLFormElement>) => {
     e.preventDefault()
 
-    if (user) {
-      // Autenticado: persiste endereço novo se necessário
-      if (!usandoNovoEndereco && enderecoSelecionadoId) { setEtapa('pagamento'); return }
-      const res = await fetch('/api/enderecos', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...enderecoForm, padrao: enderecosSalvos.length === 0 }),
-      })
-      const json = await res.json()
-      if (!res.ok) { setError(json.error?.message ?? 'Erro ao salvar endereço.'); return }
-      setEnderecosSalvos(prev => [...prev, json.data])
-      setEnderecoSelecionadoId(json.data.id)
-      setUsandoNovoEndereco(false)
+    if (opcoesFrete.length > 0 && !freteSelecionado) {
+      setError('Selecione uma opção de entrega para continuar.')
+      return
     }
-    // Visitante: endereço fica em enderecoForm, salvo em handlePagar via /finalizar
 
+    // Endereço fica em memória até o handlePagar; é criado dentro da transação do pedido.
     setEtapa('pagamento')
   }
 
   // ─── Step 4: Pagamento ────────────────────────────────────────────────────
 
   const handlePagar = async ({ formData }: IPaymentFormData) => {
-    let enderecoId = enderecoSelecionadoId
-
-    // Visitante: cria conta + endereço antes do pedido
+    // Visitante: cria conta antes do pedido (endereço vai dentro da transação do pedido)
     if (!user) {
       const finRes = await fetch('/api/checkout/finalizar', {
         method: 'POST',
@@ -260,12 +358,10 @@ export default function CheckoutPage() {
           nome: `${dados.nome} ${dados.sobrenome}`.trim(),
           telefone: dados.telefone,
           cpf: dados.cpf || undefined,
-          endereco: enderecoForm,
         }),
       })
       const finJson = await finRes.json()
       if (!finRes.ok) throw new Error(finJson.error?.message ?? 'Erro ao finalizar checkout.')
-      enderecoId = finJson.data.enderecoId
       fetchSession() // atualiza navbar em background
     }
 
@@ -273,8 +369,13 @@ export default function CheckoutPage() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        itens: items.map(i => ({ produtoId: i.produtoId, quantidade: i.quantidade })),
-        enderecoId: enderecoId ?? undefined,
+        itens: items.map(i => ({ varianteId: i.varianteId, quantidade: i.quantidade })),
+        enderecoId: enderecoSelecionadoId ?? undefined,
+        enderecoForm: !enderecoSelecionadoId && enderecoForm.logradouro ? enderecoForm : undefined,
+        freteServico: freteSelecionado ? `${freteSelecionado.empresa} - ${freteSelecionado.nome}` : undefined,
+        freteValor: freteSelecionado?.preco,
+        fretePrazo: freteSelecionado?.prazo,
+        cupomCodigo: cupomAplicado?.codigo,
       }),
     })
     const pedidoJson = await pedidoRes.json()
@@ -295,6 +396,15 @@ export default function CheckoutPage() {
     router.push(`/pedidos/${pedidoJson.data.id}?status=${status === 'approved' ? 'sucesso' : 'pendente'}`)
   }
 
+  // Mantém a ref sempre com a versão mais recente de handlePagar (tem closures sobre estado atual)
+  handlePagarRef.current = handlePagar
+
+  const stableHandlePagar = useCallback(
+    (data: IPaymentFormData): Promise<void> =>
+      handlePagarRef.current ? handlePagarRef.current(data) : Promise.resolve(),
+    [] // ref garante acesso ao estado atual sem re-renderizar o brick
+  )
+
   // ─── CEP ──────────────────────────────────────────────────────────────────
 
   const handleCep = async (raw: string) => {
@@ -308,6 +418,7 @@ export default function CheckoutPage() {
       const json = await res.json()
       if (json.erro) { setCepError('CEP não encontrado.'); return }
       setEnderecoForm(d => ({ ...d, logradouro: json.logradouro ?? '', bairro: json.bairro ?? '', cidade: json.localidade ?? '', estado: json.uf ?? '' }))
+      calcularFrete(digits)
     } catch { setCepError('Erro ao buscar CEP.') }
     finally { setCepLoading(false) }
   }
@@ -356,25 +467,23 @@ export default function CheckoutPage() {
               </div>
 
               {stepStatus(1) === 'active' && (
-                <div className="step-body">
+                <div className="step-body" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
 
-                  {/* Formulário de e-mail */}
-                  {identificacao === null && (
-                    <form onSubmit={handleVerificarEmail} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                      <div className="form-field">
-                        <label>E-MAIL</label>
-                        <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="seu@email.com" required autoFocus />
-                      </div>
-                      {error && <p style={{ color: '#e53e3e', fontSize: '13px' }}>{error}</p>}
-                      <button type="submit" className="btn-primary" disabled={loading}>
-                        {loading ? 'VERIFICANDO...' : 'CONTINUAR'}
-                      </button>
-                    </form>
+                  {/* Input sempre visível — digitação dispara o debounce */}
+                  {otpFase === 'idle' && (
+                    <div className="form-field">
+                      <label style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        E-MAIL
+                        {verificandoEmail && <span style={{ fontSize: '11px', fontWeight: 400, letterSpacing: 0, color: 'var(--foreground-secondary)' }}>verificando...</span>}
+                      </label>
+                      <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="seu@email.com" autoFocus />
+                      {error && <p style={{ color: '#e53e3e', fontSize: '12px', marginTop: '6px' }}>{error}</p>}
+                    </div>
                   )}
 
-                  {/* Conta encontrada — painel "Compra rápida" */}
+                  {/* Conta encontrada — painel "Compra rápida" aparece abaixo do input */}
                   {identificacao === 'existente' && otpFase === 'idle' && (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                       <div style={{ display: 'flex', alignItems: 'flex-start', gap: '12px', padding: '16px', background: 'var(--surface-light)', border: '1px solid var(--border-light)' }}>
                         <Zap size={18} style={{ flexShrink: 0, marginTop: '1px' }} />
                         <div>
@@ -384,24 +493,12 @@ export default function CheckoutPage() {
                           </p>
                         </div>
                       </div>
-
-                      {error && <p style={{ color: '#e53e3e', fontSize: '13px' }}>{error}</p>}
-
                       <button onClick={handleEntrarComCodigo} className="btn-primary">
                         ENTRAR COM CÓDIGO
                       </button>
-                      <button
-                        onClick={() => setEtapa('dados')}
-                        style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '13px', color: 'var(--foreground-secondary)', textDecoration: 'underline', padding: 0 }}
-                      >
-                        Continuar compra
-                      </button>
-                      <button
-                        onClick={() => { setIdentificacao(null); setError(null) }}
-                        style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '12px', color: 'var(--foreground-secondary)', padding: 0, textAlign: 'left' }}
-                      >
-                        ← Usar outro e-mail
-                      </button>
+                      <p style={{ fontSize: '12px', color: 'var(--foreground-secondary)', margin: 0 }}>
+                        Para usar dados salvos e continuar, entre com seu código de acesso.
+                      </p>
                     </div>
                   )}
 
@@ -505,7 +602,12 @@ export default function CheckoutPage() {
                 <span className="step-number">03</span>
                 <div className="step-header-content">
                   <span className="step-title font-heading">ENTREGA</span>
-                  {stepStatus(3) === 'done' && resumoEndereco && <span className="step-summary">{resumoEndereco}</span>}
+                  {stepStatus(3) === 'done' && resumoEndereco && (
+                    <span className="step-summary">
+                      {resumoEndereco}
+                      {freteSelecionado && ` · ${freteSelecionado.empresa} ${freteSelecionado.nome} (${fmt(freteSelecionado.preco)})`}
+                    </span>
+                  )}
                 </div>
                 {stepStatus(3) === 'done' && (
                   <button className="step-edit-btn" onClick={e => { e.stopPropagation(); setEtapa('entrega') }}>Editar</button>
@@ -537,11 +639,10 @@ export default function CheckoutPage() {
                             </div>
                           </label>
                         ))}
-                        <button type="button" onClick={() => { setUsandoNovoEndereco(true); setEnderecoForm(ENDERECO_VAZIO) }}
+                        <button type="button" onClick={() => { setUsandoNovoEndereco(true); setEnderecoSelecionadoId(null); setEnderecoForm(ENDERECO_VAZIO); setOpcoesFrete([]); setFreteSelecionado(null) }}
                           style={{ alignSelf: 'flex-start', fontSize: '12px', color: 'var(--foreground-secondary)', background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline', padding: 0 }}>
                           + Usar outro endereço
                         </button>
-                        <button type="submit" className="btn-primary">IR PARA PAGAMENTO</button>
                       </div>
                     )}
 
@@ -591,9 +692,66 @@ export default function CheckoutPage() {
                             <input value={enderecoForm.estado} onChange={e => setEnderecoForm(d => ({ ...d, estado: e.target.value }))} placeholder="SP" maxLength={2} required />
                           </div>
                         </div>
-                        <button type="submit" className="btn-primary">IR PARA PAGAMENTO</button>
                       </>
                     )}
+
+                    {/* ── Opções de frete ── */}
+                    {(calculandoFrete || opcoesFrete.length > 0 || freteError) && (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                        <label style={{ fontSize: '10px', fontWeight: 700, letterSpacing: '0.12em', color: 'var(--foreground-secondary)' }}>
+                          OPÇÕES DE ENTREGA
+                        </label>
+
+                        {calculandoFrete && (
+                          <p style={{ fontSize: '13px', color: 'var(--foreground-secondary)', padding: '12px 0' }}>
+                            Calculando opções de frete...
+                          </p>
+                        )}
+
+                        {freteError && (
+                          <p style={{ fontSize: '12px', color: '#e53e3e' }}>{freteError}</p>
+                        )}
+
+                        {opcoesFrete.map(opcao => (
+                          <label
+                            key={opcao.id}
+                            style={{
+                              display: 'flex', alignItems: 'center', gap: '12px',
+                              padding: '14px 16px', cursor: 'pointer',
+                              border: `1px solid ${freteSelecionado?.id === opcao.id ? 'var(--foreground-primary)' : 'var(--border-light)'}`,
+                            }}
+                          >
+                            <input
+                              type="radio"
+                              name="frete"
+                              checked={freteSelecionado?.id === opcao.id}
+                              onChange={() => setFreteSelecionado(opcao)}
+                              style={{ flexShrink: 0 }}
+                            />
+                            <div style={{ flex: 1 }}>
+                              <p style={{ fontSize: '13px', fontWeight: 500 }}>
+                                {opcao.empresa} — {opcao.nome}
+                              </p>
+                              <p style={{ fontSize: '12px', color: 'var(--foreground-secondary)', marginTop: '2px' }}>
+                                {opcao.prazo} dia{opcao.prazo !== 1 ? 's' : ''} útil{opcao.prazo !== 1 ? 'eis' : ''}
+                              </p>
+                            </div>
+                            <span style={{ fontSize: '13px', fontWeight: 600, fontFamily: 'var(--font-geist-mono)', whiteSpace: 'nowrap' }}>
+                              {fmt(opcao.preco)}
+                            </span>
+                          </label>
+                        ))}
+                      </div>
+                    )}
+
+                    {error && <p style={{ color: '#e53e3e', fontSize: '12px' }}>{error}</p>}
+                    <button
+                      type="submit"
+                      className="btn-primary"
+                      disabled={calculandoFrete || (opcoesFrete.length > 0 && !freteSelecionado)}
+                    >
+                      IR PARA PAGAMENTO
+                    </button>
                   </form>
                 </div>
               )}
@@ -608,8 +766,9 @@ export default function CheckoutPage() {
                 </div>
               </div>
 
-              {stepStatus(4) === 'active' && (
-                <div className="step-body">
+              {/* brick monta uma vez e fica vivo; display:none evita desmontagem pelo SDK do MP */}
+              {brickMontado && (
+                <div className="step-body" style={{ display: stepStatus(4) === 'active' ? 'block' : 'none' }}>
                   {items.length === 0 ? (
                     <p style={{ fontSize: '13px', color: 'var(--foreground-secondary)' }}>
                       Seu carrinho está vazio.{' '}
@@ -617,9 +776,9 @@ export default function CheckoutPage() {
                     </p>
                   ) : (
                     <MpPayment
-                      initialization={{ amount: total() }}
+                      initialization={{ amount: totalFinal }}
                       customization={{ paymentMethods: { creditCard: 'all', debitCard: 'all', ticket: 'all', bankTransfer: 'all' } }}
-                      onSubmit={handlePagar}
+                      onSubmit={stableHandlePagar}
                       onError={err => console.error('[MP Brick]', err)}
                     />
                   )}
@@ -639,14 +798,14 @@ export default function CheckoutPage() {
             <p style={{ fontSize: '13px', color: 'var(--foreground-secondary)', padding: '16px 0' }}>Nenhum item no carrinho.</p>
           ) : (
             items.map(item => (
-              <div key={item.produtoId} className="summary-item">
+              <div key={item.varianteId} className="summary-item">
                 {item.imagem
                   ? <Image src={item.imagem} alt={item.nome} width={64} height={64} style={{ objectFit: 'cover' }} />
                   : <div style={{ width: 64, height: 64, background: 'var(--surface-light)' }} />
                 }
                 <div className="summary-item-info">
                   <h4>{item.nome}</h4>
-                  <span className="detail">Qtd: {item.quantidade}</span>
+                  <span className="detail">{item.cor} · {item.tamanho} · Qtd: {item.quantidade}</span>
                 </div>
                 <span className="item-price font-caption">{fmt(item.preco * item.quantidade)}</span>
               </div>
@@ -656,14 +815,91 @@ export default function CheckoutPage() {
           <div className="divider" />
           <div className="summary-totals">
             <div className="row"><span className="label">Subtotal</span><span className="value">{fmt(total())}</span></div>
-            <div className="row"><span className="label">Frete</span><span className="value">Grátis</span></div>
-            <div className="divider" />
-            <div className="total"><span className="label">Total</span><span className="value">{fmt(total())}</span></div>
+            <div className="row">
+              <span className="label">Frete</span>
+              <span className="value">
+                {calculandoFrete
+                  ? 'Calculando...'
+                  : freteSelecionado
+                    ? fmt(freteSelecionado.preco)
+                    : '—'}
+              </span>
+            </div>
+
+            {/* Cupom aplicado */}
+            {cupomAplicado && (
+              <div className="row" style={{ color: '#15803D' }}>
+                <span className="label" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  {cupomAplicado.codigo}
+                  <button
+                    onClick={() => setCupomAplicado(null)}
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '11px', color: '#9B2C2C', padding: 0, textDecoration: 'underline' }}
+                  >
+                    remover
+                  </button>
+                </span>
+                <span className="value">−{fmt(cupomAplicado.desconto)}</span>
+              </div>
+            )}
+
+            {/* Campo de cupom */}
+            {!cupomAplicado && (
+              <div style={{ marginTop: '4px' }}>
+                {!cupomAberto ? (
+                  <button
+                    onClick={() => setCupomAberto(true)}
+                    style={{ fontSize: '12px', color: 'var(--foreground-secondary)', background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline', padding: '4px 0' }}
+                  >
+                    Tenho um cupom de desconto
+                  </button>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginTop: '4px' }}>
+                    <div style={{ display: 'flex', gap: '8px' }}>
+                      <input
+                        type="text"
+                        value={cupomInput}
+                        onChange={e => { setCupomInput(e.target.value.toUpperCase()); setCupomError(null) }}
+                        onKeyDown={e => e.key === 'Enter' && handleAplicarCupom()}
+                        placeholder="CÓDIGO"
+                        autoFocus
+                        style={{
+                          flex: 1, height: '36px', padding: '0 10px',
+                          fontSize: '12px', fontFamily: 'var(--font-geist-mono)',
+                          letterSpacing: '0.1em', border: '1px solid var(--border-light)',
+                          background: 'var(--surface-primary)', outline: 'none',
+                        }}
+                      />
+                      <button
+                        onClick={handleAplicarCupom}
+                        disabled={cupomLoading || !cupomInput.trim()}
+                        style={{
+                          padding: '0 14px', height: '36px', fontSize: '11px',
+                          fontWeight: 700, letterSpacing: '0.08em',
+                          background: 'var(--foreground-primary)', color: 'var(--foreground-inverse)',
+                          border: 'none', cursor: cupomLoading ? 'wait' : 'pointer',
+                          opacity: (!cupomInput.trim() || cupomLoading) ? 0.5 : 1,
+                        }}
+                      >
+                        {cupomLoading ? '...' : 'APLICAR'}
+                      </button>
+                    </div>
+                    {cupomError && <p style={{ fontSize: '11px', color: '#e53e3e', margin: 0 }}>{cupomError}</p>}
+                  </div>
+                )}
+              </div>
+            )}
+
+            <div className="divider" style={{ marginTop: '8px' }} />
+            <div className="total"><span className="label">Total</span><span className="value">{fmt(totalFinal)}</span></div>
           </div>
 
           <div className="delivery-note">
             <Truck size={16} style={{ flexShrink: 0, color: 'var(--foreground-secondary)' }} />
-            <span>Entrega estimada: 3-5 dias úteis</span>
+            <span>
+              {freteSelecionado
+                ? `${freteSelecionado.empresa} — entrega em até ${freteSelecionado.prazo} dia${freteSelecionado.prazo !== 1 ? 's' : ''} útil${freteSelecionado.prazo !== 1 ? 'eis' : ''}`
+                : 'Frete calculado ao informar o endereço'}
+            </span>
           </div>
         </div>
       </div>
